@@ -19,6 +19,12 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/mcp", tags=["mcp"])
 
 
+def _request_origin(request: Request) -> str:
+    host = request.headers.get("host") or f"localhost:{os.getenv('ODYSSEUS_PORT', '7000')}"
+    scheme = request.url.scheme or "http"
+    return f"{scheme}://{host}".rstrip("/")
+
+
 def _load_disabled_map():
     """Load per-server disabled tool sets from DB."""
     db = SessionLocal()
@@ -363,9 +369,9 @@ def setup_mcp_routes(mcp_manager: McpManager):
             client_id = keys["client_id"]
             scopes = oauth_cfg.get("scopes", [])
 
-            # For Desktop App creds, redirect to localhost — the user will
-            # paste the resulting URL back if they're on a different device.
-            redirect_uri = "http://localhost:7000/api/mcp/oauth/callback"
+            # Use the same origin the admin is using. macOS native installs may
+            # run on 7001 because AirPlay often occupies 7000.
+            redirect_uri = f"{_request_origin(request)}/api/mcp/oauth/callback"
 
             params = {
                 "client_id": client_id,
@@ -433,7 +439,7 @@ def setup_mcp_routes(mcp_manager: McpManager):
             client_id = keys["client_id"]
             client_secret = keys["client_secret"]
 
-            redirect_uri = "http://localhost:7000/api/mcp/oauth/callback"
+            redirect_uri = f"{_request_origin(request)}/api/mcp/oauth/callback"
 
             async with httpx.AsyncClient() as client:
                 resp = await client.post(
@@ -543,7 +549,7 @@ def _oauth_authorize_page(auth_url: str, server_id: str, host: str) -> str:
   <div class="divider"></div>
   <form method="POST" action="http://{host}/api/mcp/oauth/exchange/{server_id}">
     <p>Paste the URL from your browser after signing in:</p>
-    <input type="text" name="callback_url" placeholder="http://localhost:7000/api/mcp/oauth/callback?code=..." required>
+    <input type="text" name="callback_url" placeholder="http://localhost/api/mcp/oauth/callback?code=..." required>
     <br><button type="submit">Connect</button>
   </form>
 </div></body></html>"""

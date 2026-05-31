@@ -2372,7 +2372,11 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None) -> Dict:
 # Cookbook routes loopback. The agent's tool calls run in-process but
 # need to reach admin-gated cookbook routes; we ride the per-process
 # internal token so require_admin lets us through. See core/middleware.py.
-_COOKBOOK_BASE = "http://localhost:7000"
+_LOOPBACK_BASE = os.getenv(
+    "ODYSSEUS_INTERNAL_BASE_URL",
+    f"http://127.0.0.1:{os.getenv('ODYSSEUS_PORT', '7000')}",
+).rstrip("/")
+_COOKBOOK_BASE = _LOOPBACK_BASE
 
 
 def _internal_headers(owner: Optional[str] = None) -> Dict[str, str]:
@@ -2413,7 +2417,7 @@ async def _cookbook_servers() -> Dict[str, Any]:
 
 
 async def _resolve_cookbook_host(name_or_host: str) -> str:
-    """Map a friendly server NAME ('gpu-box', 'workstation') to its ssh host
+    """Map a friendly server NAME ('gpu-server', 'workstation') to its ssh host
     string ('user@192.0.2.10'). If the input already looks like an
     ssh host (contains '@' or matches a known host), or matches nothing,
     it's returned unchanged. 'local'/'localhost' → '' (this machine)."""
@@ -2865,7 +2869,7 @@ async def do_download_model(content: str, owner: Optional[str] = None) -> Dict:
     if not repo_id:
         return {"error": "repo_id is required", "exit_code": 1}
     host = (args.get("host") or "").strip()
-    # Resolve a friendly server NAME ("gpu-box") to its ssh host string.
+    # Resolve a friendly server NAME ("gpu-server") to its ssh host string.
     if host:
         host = await _resolve_cookbook_host(host)
     # No host specified → default to the cookbook's currently-selected
@@ -3387,7 +3391,7 @@ async def do_list_cookbook_servers(content: str, owner: Optional[str] = None) ->
         env_bit = f" [{h.get('env')}: {h.get('envPath')}]" if h.get("env") and h.get("env") != "none" else ""
         plat = f" ({h.get('platform')})" if h.get("platform") else ""
         lines.append(f"- {name} → {host}{plat}{env_bit}{mark}")
-    lines.append("\nRefer to servers by their name (e.g. download_model with host=\"gpu-box\").")
+    lines.append("\nRefer to servers by their name (e.g. download_model with host=\"gpu-server\").")
     return {"output": "\n".join(lines), "servers": hosts, "default_host": default, "exit_code": 0}
 
 
@@ -3593,7 +3597,7 @@ async def do_edit_image(content: str, owner: Optional[str] = None) -> Dict:
         payload["scale"] = args["scale"]
     try:
         async with httpx.AsyncClient(timeout=120) as client:
-            resp = await client.post(f"http://localhost:7000/api/gallery/{action}", json=payload)
+            resp = await client.post(f"{_LOOPBACK_BASE}/api/gallery/{action}", json=payload)
             data = resp.json()
         if data.get("success") or data.get("id"):
             return {"output": f"Image edited ({action}). New image ID: {data.get('id', '?')}", "exit_code": 0}
@@ -3769,7 +3773,7 @@ async def do_resolve_contact(content: str, owner: Optional[str] = None) -> Dict:
     async with httpx.AsyncClient(timeout=30) as client:
         # 2. Email history (sent/received)
         try:
-            resp = await client.get("http://localhost:7000/api/email/resolve-contact", params={"name": name})
+            resp = await client.get(f"{_LOOPBACK_BASE}/api/email/resolve-contact", params={"name": name})
             if resp.status_code == 200:
                 for c in (resp.json().get("contacts") or []):
                     email = (c.get("email") or "").strip().lower()

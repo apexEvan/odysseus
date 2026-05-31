@@ -1,0 +1,392 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+START_APP=0
+WITH_SERVICES=""
+YES=0
+SKIP_NODE=0
+PYTHON_BIN="${PYTHON_BIN:-}"
+
+usage() {
+  cat <<'EOF'
+Usage: scripts/bootstrap [--start] [--with-services|--no-services] [--yes] [--skip-node]
+
+Friendly first-run setup:
+  - detects macOS/Linux runtime tools
+  - asks before installing system packages
+  - creates a project-local .venv
+  - installs Python dependencies into .venv
+  - installs Node dependencies from package-lock.json when npm is available
+  - finds a free local app port and writes local .env defaults
+  - skips temporary admin creation so the browser setup wizard can create it
+
+Options:
+  --start          Start Odysseus after setup.
+  --with-services  Start ChromaDB, SearXNG, and ntfy with Docker Compose.
+  --no-services    Do not ask about Docker sidecar services.
+  --yes            Accept safe default prompts.
+  --skip-node      Skip npm ci.
+EOF
+}
+
+log() { printf '\n==> %s\n' "$*"; }
+info() { printf '    %s\n' "$*"; }
+warn() { printf '!!  %s\n' "$*" >&2; }
+
+ask_yes_no() {
+  local prompt="$1"
+  local default="${2:-n}"
+  if [ "$YES" -eq 1 ]; then
+    [ "$default" = "y" ]
+    return
+  fi
+  local suffix="[y/N]"
+  [ "$default" = "y" ] && suffix="[Y/n]"
+  local answer
+  read -r -p "$prompt $suffix " answer
+  answer="${answer:-$default}"
+  case "$answer" in
+    y|Y|yes|YES) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+run_cmd() {
+  printf '    $ %s\n' "$*"
+  "$@"
+}
+
+has_cmd() {
+  command -v "$1" >/dev/null 2>&1
+}
+
+detect_os() {
+  case "$(uname -s)" in
+    Darwin) echo "macos" ;;
+    Linux) echo "linux" ;;
+    *) echo "unsupported" ;;
+  esac
+}
+
+python_version_ok() {
+  "$1" - <<'PY'
+import sys
+raise SystemExit(0 if sys.version_info >= (3, 11) else 1)
+PY
+}
+
+choose_python() {
+  if [ -n "$PYTHON_BIN" ]; then
+    if [ -x "$PYTHON_BIN" ] && python_version_ok "$PYTHON_BIN"; then
+      echo "$PYTHON_BIN"
+      return
+    fi
+    warn "PYTHON_BIN is set but is not executable Python 3.11+: $PYTHON_BIN"
+  fi
+
+  for candidate in \
+    /opt/homebrew/bin/python3.13 \
+    /usr/local/bin/python3.13 \
+    python3.13 python3.12 python3.11 python3
+  do
+    if has_cmd "$candidate" || [ -x "$candidate" ]; then
+      if python_version_ok "$candidate" 2>/dev/null; then
+        command -v "$candidate" 2>/dev/null || echo "$candidate"
+        return
+      fi
+    fi
+  done
+  return 1
+}
+
+install_system_deps() {
+  local os_name="$1"
+  if [ "$os_name" = "macos" ]; then
+    if ! has_cmd brew; then
+      warn "Homebrew is required for automatic macOS runtime installs."
+      warn "Install it from https://brew.sh/ and rerun this script."
+      return 1
+    fi
+    local formulas=()
+    brew list python@3.13 >/dev/null 2>&1 || formulas+=(python@3.13)
+    brew list tmux >/dev/null 2>&1 || formulas+=(tmux)
+    if [ "${#formulas[@]}" -gt 0 ]; then
+      if ask_yes_no "Install missing Homebrew packages: ${formulas[*]}?" y; then
+        run_cmd brew install "${formulas[@]}"
+      fi
+    else
+      info "Homebrew python@3.13 and tmux are already installed."
+    fi
+  elif [ "$os_name" = "linux" ]; then
+    if ! has_cmd tmux; then
+      if ask_yes_no "Install tmux with the detected Linux package manager?" y; then
+        if has_cmd apt-get; then run_cmd sudo apt-get update && run_cmd sudo apt-get install -y tmux
+        elif has_cmd dnf; then run_cmd sudo dnf install -y tmux
+        elif has_cmd pacman; then run_cmd sudo pacman -S --noconfirm tmux
+        elif has_cmd zypper; then run_cmd sudo zypper --non-interactive install tmux
+        elif has_cmd apk; then run_cmd sudo apk add tmux
+        else warn "No supported package manager found. Install tmux manually."
+        fi
+      fi
+    fi
+  fi
+}
+
+find_free_port() {
+  local start="${ODYSSEUS_PORT:-}"
+  local ports=()
+  if [ -n "$start" ]; then ports+=("$start"); fi
+  ports+=(7000 7001 7002 7003 7010 7100)
+  "$PYTHON_BIN" - "${ports[@]}" <<'PY'
+import socket, sys
+
+def is_connectable(host, port):
+    try:
+        with socket.create_connection((host, port), timeout=0.2):
+            return True
+    except OSError:
+        return False
+
+def can_bind(host, port, family):
+    try:
+        with socket.socket(family, socket.SOCK_STREAM) as sock:
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            if family == socket.AF_INET6:
+                sock.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 1)
+            sock.bind((host, port))
+            return True
+    except OSError:
+        return False
+
+seen = []
+for raw in sys.argv[1:]:
+    try:
+        port = int(raw)
+    except ValueError:
+        continue
+    if port in seen:
+        continue
+    seen.append(port)
+
+    # macOS services such as Control Center can listen on *:7000 while a
+    # loopback-only bind still appears available. Treat any reachable or
+    # wildcard-bound listener as occupied before offering the port.
+    if is_connectable("127.0.0.1", port) or is_connectable("localhost", port):
+        continue
+    if not can_bind("0.0.0.0", port, socket.AF_INET):
+        continue
+    if socket.has_ipv6 and not can_bind("::", port, socket.AF_INET6):
+        continue
+
+    print(port)
+    raise SystemExit(0)
+raise SystemExit("No free Odysseus port found in the default range.")
+PY
+}
+
+set_env_key() {
+  local key="$1"
+  local value="$2"
+  [ -f .env ] || cp .env.example .env
+  "$PYTHON_BIN" - "$key" "$value" <<'PY'
+from pathlib import Path
+import sys
+key, value = sys.argv[1], sys.argv[2]
+path = Path(".env")
+lines = path.read_text().splitlines() if path.exists() else []
+needle = key + "="
+updated = False
+out = []
+for line in lines:
+    if line.startswith(needle):
+        out.append(f"{key}={value}")
+        updated = True
+    else:
+        out.append(line)
+if not updated:
+    if out and out[-1].strip():
+        out.append("")
+    out.append(f"{key}={value}")
+path.write_text("\n".join(out) + "\n")
+PY
+}
+
+detect_backends() {
+  log "Checking for local LLM backends"
+  "$ROOT_DIR/.venv/bin/python" - <<'PY'
+import json
+from src.model_discovery import ModelDiscovery
+
+try:
+    discovered = ModelDiscovery(default_host="localhost").discover_models()
+except Exception as exc:
+    print(f"    Discovery skipped: {exc}")
+    raise SystemExit(0)
+
+items = discovered.get("items") or []
+if not items:
+    print("    No local OpenAI-compatible model servers found.")
+    print("    Good beginner options: Ollama on :11434, LM Studio on :1234, or a hosted API key in Settings.")
+else:
+    for item in items:
+        models = ", ".join((item.get("models") or [])[:3])
+        more = "..." if len(item.get("models") or []) > 3 else ""
+        print(f"    {item.get('provider')}: {item.get('base_url')} ({models}{more})")
+PY
+}
+
+start_services() {
+  if [ "$WITH_SERVICES" = "0" ]; then
+    return
+  fi
+  if ! has_cmd docker; then
+    warn "Docker is not installed. Skipping ChromaDB/SearXNG/ntfy sidecars."
+    return
+  fi
+  if ! docker info >/dev/null 2>&1; then
+    warn "Docker is installed but the daemon is not running. Skipping sidecars."
+    return
+  fi
+  if [ "$WITH_SERVICES" = "1" ] || ask_yes_no "Start bundled ChromaDB, SearXNG, and ntfy with Docker Compose?" n; then
+    run_cmd docker compose up -d chromadb searxng ntfy
+  fi
+}
+
+auth_configured() {
+  "$ROOT_DIR/.venv/bin/python" - <<'PY'
+import json
+from pathlib import Path
+path = Path("data/auth.json")
+try:
+    data = json.loads(path.read_text())
+except Exception:
+    raise SystemExit(1)
+raise SystemExit(0 if data.get("users") else 1)
+PY
+}
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --start) START_APP=1 ;;
+    --with-services) WITH_SERVICES=1 ;;
+    --no-services) WITH_SERVICES=0 ;;
+    --yes|-y) YES=1 ;;
+    --skip-node) SKIP_NODE=1 ;;
+    -h|--help) usage; exit 0 ;;
+    *) warn "Unknown option: $1"; usage; exit 1 ;;
+  esac
+  shift
+done
+
+cd "$ROOT_DIR"
+OS_NAME="$(detect_os)"
+if [ "$OS_NAME" = "unsupported" ]; then
+  warn "Unsupported OS: $(uname -s). Use the README manual install path."
+  exit 1
+fi
+
+log "Odysseus bootstrap"
+info "Platform: $OS_NAME"
+info "Project: $ROOT_DIR"
+
+install_system_deps "$OS_NAME"
+
+if ! PYTHON_BIN="$(choose_python)"; then
+  warn "Python 3.11+ was not found."
+  if [ "$OS_NAME" = "macos" ]; then
+    warn "Install Homebrew python@3.13, then rerun: brew install python@3.13"
+  else
+    warn "Install Python 3.11+ with your OS package manager or pyenv."
+  fi
+  exit 1
+fi
+
+log "Creating isolated Python environment"
+info "Python: $("$PYTHON_BIN" --version 2>&1)"
+run_cmd "$PYTHON_BIN" -m venv .venv
+run_cmd .venv/bin/python -m pip install --upgrade pip setuptools wheel
+run_cmd .venv/bin/python -m pip install -r requirements.txt
+
+if [ "$SKIP_NODE" -eq 0 ]; then
+  if has_cmd npm; then
+    log "Installing Node dependencies"
+    run_cmd npm ci
+  else
+    warn "npm not found. Skipping Node test dependencies."
+  fi
+fi
+
+PORT="$(find_free_port)"
+log "Writing local runtime settings"
+set_env_key ODYSSEUS_PORT "$PORT"
+set_env_key ODYSSEUS_INTERNAL_BASE_URL "http://127.0.0.1:$PORT"
+set_env_key AUTH_ENABLED "true"
+info "Selected port: $PORT"
+
+log "Preparing local data directories"
+ODYSSEUS_SKIP_ADMIN_CREATE=1 run_cmd .venv/bin/python setup.py
+
+start_services
+detect_backends
+
+if auth_configured; then
+  cat <<EOF
+
+Odysseus is prepared.
+
+Existing auth configuration found. Start the app and sign in with your existing
+admin account:
+  http://127.0.0.1:${PORT}
+EOF
+  SETUP_TOKEN=""
+else
+  SETUP_TOKEN="$(.venv/bin/python - <<'PY'
+import secrets
+print(secrets.token_urlsafe(24))
+PY
+)"
+  SETUP_URL="http://127.0.0.1:${PORT}/login?setup_token=${SETUP_TOKEN}"
+
+  cat <<EOF
+
+Odysseus is prepared.
+
+First-run setup URL:
+  ${SETUP_URL}
+
+This URL creates the first admin account. It is local-only and valid only for
+the server process started with this token.
+EOF
+fi
+
+if [ "$START_APP" -eq 1 ]; then
+  log "Starting Odysseus"
+  export ODYSSEUS_PORT="$PORT"
+  export ODYSSEUS_INTERNAL_BASE_URL="http://127.0.0.1:$PORT"
+  if [ -n "$SETUP_TOKEN" ]; then
+    export ODYSSEUS_SETUP_TOKEN="$SETUP_TOKEN"
+  fi
+  exec .venv/bin/uvicorn app:app --host 127.0.0.1 --port "$PORT"
+else
+  if [ -n "$SETUP_TOKEN" ]; then
+    cat <<EOF
+
+Start it with:
+  source .venv/bin/activate
+  ODYSSEUS_PORT=${PORT} ODYSSEUS_INTERNAL_BASE_URL=http://127.0.0.1:${PORT} ODYSSEUS_SETUP_TOKEN=${SETUP_TOKEN} \\
+    uvicorn app:app --host 127.0.0.1 --port ${PORT}
+
+Then open:
+  ${SETUP_URL}
+EOF
+  else
+    cat <<EOF
+
+Start it with:
+  source .venv/bin/activate
+  ODYSSEUS_PORT=${PORT} ODYSSEUS_INTERNAL_BASE_URL=http://127.0.0.1:${PORT} \\
+    uvicorn app:app --host 127.0.0.1 --port ${PORT}
+EOF
+  fi
+fi

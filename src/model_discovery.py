@@ -1,10 +1,13 @@
-import subprocess
 import json
+import os
+import re
+import subprocess
 import time
 import httpx
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import List, Dict, Any, Optional
+from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
 
@@ -12,6 +15,51 @@ logger = logging.getLogger(__name__)
 _hosts_cache: List[str] = []
 _hosts_cache_time: float = 0
 _HOSTS_CACHE_TTL = 60  # seconds
+
+
+COMMON_OPENAI_COMPAT_PORTS = {
+    11434: "ollama",
+    1234: "lm-studio",
+    5000: "text-generation-webui",
+    5001: "koboldcpp",
+    8000: "vllm",
+    8080: "llama.cpp",
+    30000: "sglang",
+}
+
+
+def _normalize_openai_base(value: str) -> str:
+    """Return an OpenAI-compatible base URL.
+
+    Bare host[:port] values get `/v1`; full URLs keep their path because some
+    providers use a different OpenAI-compatible prefix, such as Gemini's
+    `/v1beta/openai`.
+    """
+    raw = (value or "").strip().rstrip("/")
+    if not raw:
+        return ""
+    if not re.match(r"^https?://", raw):
+        raw = "http://" + raw
+    for suffix in ("/chat/completions", "/completions", "/models", "/responses"):
+        if raw.endswith(suffix):
+            raw = raw[: -len(suffix)].rstrip("/")
+    parsed = urlparse(raw)
+    if not parsed.path or parsed.path == "/":
+        raw += "/v1"
+    return raw
+
+
+def _provider_guess(base: str, port: Optional[int] = None) -> str:
+    host = (urlparse(base).hostname or "").lower()
+    if "openrouter.ai" in host:
+        return "openrouter"
+    if "generativelanguage.googleapis.com" in host:
+        return "gemini-openai"
+    if "api.openai.com" in host:
+        return "openai"
+    if "anthropic.com" in host:
+        return "anthropic"
+    return COMMON_OPENAI_COMPAT_PORTS.get(port or 0, "openai-compatible")
 
 
 def discover_tailscale_hosts() -> List[str]:
@@ -73,14 +121,37 @@ class ModelDiscovery:
         self.openai_api_key = openai_api_key
         self.openai_compat_path = "/v1/chat/completions"
 
+    def _configured_bases(self) -> List[str]:
+        """LLM_ENDPOINTS accepts exact OpenAI-compatible base URLs.
+
+        LLM_HOSTS remains backwards-compatible: values may be bare hosts,
+        host:port pairs, or full URLs.
+        """
+        bases = []
+        for env_name in ("LLM_ENDPOINTS", "LLM_HOSTS"):
+            for item in os.getenv(env_name, "").split(","):
+                item = item.strip()
+                if not item:
+                    continue
+                if "/" in item or re.search(r":\d+$", item):
+                    base = _normalize_openai_base(item)
+                    if base and base not in bases:
+                        bases.append(base)
+        return bases
+
     def _get_hosts(self) -> List[str]:
         """Get all hosts to scan, using env override, Tailscale, or default."""
-        import os
-
         # Manual override takes priority
         extra = os.getenv("LLM_HOSTS", "").strip()
         if extra:
-            hosts = [h.strip() for h in extra.split(",") if h.strip()]
+            hosts = []
+            for raw in extra.split(","):
+                raw = raw.strip()
+                if not raw:
+                    continue
+                parsed = urlparse(raw if re.match(r"^https?://", raw) else f"http://{raw}")
+                if parsed.hostname and not parsed.port:
+                    hosts.append(parsed.hostname)
             # Always include the default host too
             if self.default_host not in hosts:
                 hosts.insert(0, self.default_host)
@@ -97,9 +168,11 @@ class ModelDiscovery:
         # Fallback to single host
         return [self.default_host]
 
-    def _check_port(self, host: str, port: int) -> Optional[Dict[str, Any]]:
-        """Check a single host:port for models."""
-        base = f"http://{host}:{port}/v1"
+    def _check_base(self, base: str) -> Optional[Dict[str, Any]]:
+        """Check a single OpenAI-compatible base URL for models."""
+        base = _normalize_openai_base(base)
+        parsed = urlparse(base)
+        port = parsed.port
         try:
             r = httpx.get(f"{base}/models", timeout=3)
             if not r.is_success:
@@ -108,15 +181,32 @@ class ModelDiscovery:
             ids = [m.get("id") for m in (data.get("data") or []) if m.get("id")]
             if ids:
                 return {
-                    "host": host,
+                    "host": parsed.hostname or "",
                     "port": port,
-                    "url": f"http://{host}:{port}{self.openai_compat_path}",
+                    "provider": _provider_guess(base, port),
+                    "base_url": base,
+                    "url": f"{base}/chat/completions",
                     "models": ids,
                     "models_display": [i.lstrip("/") for i in ids]
                 }
         except Exception:
             pass
         return None
+
+    def _check_port(self, host: str, port: int) -> Optional[Dict[str, Any]]:
+        """Check a single host:port for models."""
+        return self._check_base(f"http://{host}:{port}/v1")
+
+    def _targets(self, hosts: List[str]) -> List[str]:
+        configured = self._configured_bases()
+        targets = list(configured)
+        ports = sorted(set(COMMON_OPENAI_COMPAT_PORTS) | set(range(8000, 8021)))
+        for host in hosts:
+            for port in ports:
+                base = f"http://{host}:{port}/v1"
+                if base not in targets:
+                    targets.append(base)
+        return targets
 
     def discover_models(self) -> Dict[str, List[Dict[str, Any]]]:
         """Discover available models from all reachable hosts."""
@@ -125,23 +215,22 @@ class ModelDiscovery:
 
         logger.info(f"Scanning {len(hosts)} hosts for models: {hosts}")
 
-        # Build list of (host, port) to check
-        targets = [(h, p) for h in hosts for p in range(8000, 8021)]
+        targets = self._targets(hosts)
 
-        seen_models = set()  # dedupe by (port, model_ids) to avoid same machine via different IPs
+        seen_models = set()  # dedupe by (base, model_ids)
 
         with ThreadPoolExecutor(max_workers=50) as pool:
-            futures = {pool.submit(self._check_port, h, p): (h, p) for h, p in targets}
+            futures = {pool.submit(self._check_base, base): base for base in targets}
             for future in as_completed(futures):
                 result = future.result()
                 if result:
-                    key = (result["port"], tuple(sorted(result["models"])))
+                    key = (result["base_url"], tuple(sorted(result["models"])))
                     if key not in seen_models:
                         seen_models.add(key)
                         items.append(result)
 
         # Sort by host then port for consistent ordering
-        items.sort(key=lambda x: (x["host"], x["port"]))
+        items.sort(key=lambda x: (x["host"], x.get("port") or 0, x["base_url"]))
 
         logger.info(f"Discovered {len(items)} model endpoints across {len(hosts)} hosts")
         return {"hosts": hosts, "items": items}
@@ -150,7 +239,7 @@ class ModelDiscovery:
         """Get all available providers"""
         discovery = self.discover_models()
         items = discovery["items"]
-        providers = [{"provider": "vllm", "hosts": discovery["hosts"], "items": items}]
+        providers = [{"provider": "openai-compatible", "hosts": discovery["hosts"], "items": items}]
 
         if self.openai_api_key:
             openai_models = [

@@ -15,10 +15,19 @@ from core.database import SessionLocal, ModelEndpoint
 from core.middleware import require_admin
 from src.llm_core import _detect_provider, ANTHROPIC_MODELS
 from src.settings import load_settings as _load_settings, save_settings as _save_settings
-from src.endpoint_resolver import normalize_base as _normalize_base, build_chat_url, build_headers, _anthropic_api_root
+from src.endpoint_resolver import normalize_base as _normalize_base, build_chat_url, build_headers
 from src.auth_helpers import owner_filter
 
 logger = logging.getLogger(__name__)
+
+
+def _anthropic_api_root(base: str) -> str:
+    """Return Anthropic's API root without depending on test-time resolver stubs."""
+    base = (base or "").strip().rstrip("/")
+    host = urlparse(base).hostname or ""
+    if host.endswith("anthropic.com") and base.endswith("/v1"):
+        return base[:-3].rstrip("/")
+    return base
 
 
 # ── Curated model lists per provider ──

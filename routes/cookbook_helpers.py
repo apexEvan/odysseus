@@ -197,7 +197,7 @@ class ModelDownloadRequest(BaseModel):
     include: str | None = None  # glob pattern e.g. "*Q4_K_M*"
     hf_token: str | None = None
     env_prefix: str | None = None  # e.g. "source ~/venv/bin/activate"
-    remote_host: str | None = None  # e.g. "gpu-box" — run download on this host via SSH
+    remote_host: str | None = None  # e.g. "gpu-server" — run download on this host via SSH
     ssh_port: str | None = None    # e.g. "8022" for Termux
     platform: str | None = None    # "linux", "termux", or "windows"
     local_dir: str | None = None   # base dir to download into (a per-model subfolder is created under it); None = default HF cache

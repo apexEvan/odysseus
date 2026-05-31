@@ -1,25 +1,42 @@
 # Odysseus
-───────────────────────────────────────────────
- ⊹ ࣪ ˖ ૮( ˶ᵔ ᵕ ᵔ˶ )っ  Odysseus vers. 1.0
-───────────────────────────────────────────────
 
 ![Odysseus](docs/odysseus.jpg)
 
-A self-hosted AI workspace -- meant to be the self-hosted version of the UI experience you get from ChatGPT and Claude. But with more jank and fun. Running on your own hardware, with your own data -- local-first, privacy-first, and no trojan.
+Odysseus is a self-hosted AI workspace for chat, agents, documents, research,
+model comparison, memory, email, calendar, and local model management. It is
+designed to run on your own hardware with your own data, while still feeling
+approachable for people who are not already deep in the self-hosting world.
+
+The fastest way to try it is the guided bootstrap:
+
+```bash
+git clone https://github.com/apexEvan/odysseus.git odysseus
+cd odysseus
+./scripts/bootstrap --start
+```
+
+The bootstrap creates a project-local Python environment, installs dependencies
+there, chooses an available local port, detects common local LLM backends, and
+prints the URL to open in your browser.
 
 ## Features
-  - **Chat** -- chat with any local model or API; adding them is super simple.<br>　<sub>vLLM · llama.cpp · Ollama · OpenRouter · OpenAI</sub>
-  - **Agent** -- hand it tools and let it run the whole task itself.<br>　<sub>built on [opencode](https://github.com/anomalyco/opencode) · MCP · web · files · shell · skills · memory</sub>
-  - **Cookbook** -- Scans your hardware, recommends models, click to download and serve.. easy!<br>　<sub>built on [llmfit](https://github.com/AlexsJones/llmfit) · VRAM-aware · GGUF / FP8 / AWQ · fit scoring · vLLM / llama.cpp serving</sub>
-  - **Deep Research** -- multi-step runs that gather, read, and synthesize sources into a nice visual report.<br>　<sub>adapted from [Tongyi DeepResearch](https://github.com/Alibaba-NLP/DeepResearch)</sub>
-  - **Compare** -- a fun tool to compare models side by side. Test completely blind, no bias!<br>　<sub>multi-model · blind test · synthesis</sub>
-  - **Documents** -- YOU write the text, AI is there to assist, not the opposite.<br>　<sub>multi-tab editor · markdown · HTML · CSV · syntax highlighting · AI edits · suggestions</sub>
-  - **Memory / Skills** -- Persistent memory and skills, your agent evolves over time as it better understands you and your tasks!<br>　<sub>ChromaDB · fastembed (ONNX) · vector + keyword retrieval · import/export</sub>
-  - **Email** -- IMAP/SMTP inbox with AI triage built in: urgency reminders, auto-tag, auto-summary, auto-reply drafts, auto-spam.<br>　<sub>IMAP · SMTP · per-account routing · CalDAV-aware</sub>
-  - **Notes & Tasks** -- Quick notes with reminders, a todo list, and scheduled tasks the agent can act on.<br>　<sub>note pings · checklist · cron-style tasks · ntfy / browser / email channels</sub>
-  - **Calendar** -- Local-first calendar with CalDAV sync to Radicale / Nextcloud / Apple / Fastmail.<br>　<sub>CalDAV pull · .ics import/export · per-calendar colors · agent-aware</sub>
-  - **Works on mobile** -- looks and runs great on your phone, not just desktop.<br>　<sub>responsive · installable (PWA) · touch gestures</sub>
-  - **Extras** -- more to explore, happy if you give it a go!<br>　<sub>image editor · theme editor · file uploads (vision + PDF) · web search · presets · sessions · 2FA</sub>
+- **Chat** -- chat with local or hosted models.
+  <br><sub>vLLM · llama.cpp · Ollama · LM Studio · OpenRouter · OpenAI · Anthropic · Gemini</sub>
+- **Agent** -- give the assistant tools for web, files, shell, MCP, memory, and skills.
+  <br><sub>built on [opencode](https://github.com/anomalyco/opencode) · MCP · tool permissions · memory</sub>
+- **Cookbook** -- scan your hardware, recommend models, then download and serve them.
+  <br><sub>built on [llmfit](https://github.com/AlexsJones/llmfit) · VRAM/unified-memory aware · GGUF / FP8 / AWQ · vLLM / llama.cpp serving</sub>
+- **Deep Research** -- gather, read, and synthesize sources into visual reports.
+  <br><sub>adapted from [Tongyi DeepResearch](https://github.com/Alibaba-NLP/DeepResearch)</sub>
+- **Compare** -- compare model outputs side by side with blind testing.
+  <br><sub>multi-model · blind test · synthesis</sub>
+- **Documents** -- write, edit, and revise with AI assistance.
+  <br><sub>multi-tab editor · markdown · HTML · CSV · syntax highlighting · AI edits · suggestions</sub>
+- **Memory / Skills** -- keep persistent memories and reusable abilities.
+  <br><sub>ChromaDB · fastembed (ONNX) · vector + keyword retrieval · import/export</sub>
+- **Email, Notes, Tasks, Calendar** -- local-first personal workflows with optional AI help.
+  <br><sub>IMAP/SMTP · CalDAV · reminders · scheduled tasks · ntfy/browser/email notifications</sub>
+- **Mobile-friendly extras** -- responsive UI, PWA support, image tools, web search, uploads, presets, sessions, and 2FA.
 
 ## Demo
 A full, hover-to-play tour lives on the landing page (`docs/index.html`). A few looks:
@@ -37,16 +54,40 @@ A full, hover-to-play tour lives on the landing page (`docs/index.html`). A few 
 
 ## Quick Start
 
-Defaults work out of the box — clone, run, configure inside the app.
-Open the **Settings** panel after first login to point Odysseus at your LLM
-server, search provider, email account, etc. Only touch `.env` if you need
-to override deployment-level things like `AUTH_ENABLED`, `DATABASE_URL`,
-or pre-seed `ODYSSEUS_ADMIN_PASSWORD` (otherwise an initial password is
-generated and printed on first boot).
+Defaults work out of the box: clone, run, create the first admin account, then
+configure providers from **Settings** inside the app. You usually do not need to
+edit `.env` unless you are changing deployment-level settings such as
+`AUTH_ENABLED`, `DATABASE_URL`, or pre-seeded API keys.
 
-### Option 1: Docker (recommended)
+### Requirements
+- Python 3.11+.
+- macOS or Linux for the guided bootstrap. Windows can use the manual
+  PowerShell path below.
+- Docker Desktop or Docker Engine if you want the bundled ChromaDB, SearXNG,
+  and ntfy sidecars.
+- Optional local LLM backend such as Ollama, LM Studio, vLLM, llama.cpp,
+  SGLang, LocalAI, or a hosted provider API key.
+
+### Guided Bootstrap
 ```bash
-git clone <your-odysseus-repo-url>
+git clone https://github.com/apexEvan/odysseus.git odysseus
+cd odysseus
+./scripts/bootstrap --start
+```
+
+Bootstrap checks your platform, asks before installing system packages, creates
+`.venv`, installs dependencies there, chooses a free local port, and prints a
+short-lived first-run setup URL. Use that URL to create the first admin account
+in the browser. No temporary admin password is stored or printed by this path.
+
+To also start the bundled Docker sidecars:
+```bash
+./scripts/bootstrap --with-services --start
+```
+
+### Docker
+```bash
+git clone https://github.com/apexEvan/odysseus.git odysseus
 cd odysseus
 cp .env.example .env       # optional, but recommended for explicit defaults
 docker compose up -d --build
@@ -81,7 +122,21 @@ MemoryVectorStore initialized
 The Cookbook model catalog check should print a non-zero count. If it prints
 `0`, rebuild the Odysseus image with `docker compose build --no-cache odysseus`.
 
-### Option 2: Manual install — Linux / macOS
+### macOS Native Install
+**Requirements:** macOS with [Homebrew](https://brew.sh/). The setup script
+uses Homebrew for Python/tmux, installs Python packages into a repo-local
+`.venv`, and leaves your global Python packages alone.
+
+```bash
+git clone https://github.com/apexEvan/odysseus.git odysseus
+cd odysseus
+scripts/setup-macos.sh --with-services --start
+```
+
+Open `http://127.0.0.1:7001`. See [docs/MACOS.md](docs/MACOS.md) for LaunchAgent
+setup, global `python3` notes, and Mac hardware detection details.
+
+### Manual Install: Linux
 **Requirements:** Python 3.11+. On Linux/Termux, Cookbook also requires `tmux`
 for background model downloads and serves.
 
@@ -99,7 +154,7 @@ sudo dnf install tmux
 
 Then install Odysseus:
 ```bash
-git clone <your-odysseus-repo-url>
+git clone https://github.com/apexEvan/odysseus.git odysseus
 cd odysseus
 python3 -m venv venv
 source venv/bin/activate
@@ -108,9 +163,9 @@ python setup.py            # creates data dirs and prints an initial admin passw
 uvicorn app:app --host 0.0.0.0 --port 7000
 ```
 
-### Option 3: Manual install — Windows (PowerShell)
+### Manual Install: Windows PowerShell
 ```powershell
-git clone <your-odysseus-repo-url>
+git clone https://github.com/apexEvan/odysseus.git odysseus
 cd odysseus
 python -m venv venv
 venv\Scripts\Activate.ps1
@@ -121,6 +176,34 @@ uvicorn app:app --host 0.0.0.0 --port 7000
 
 Open `http://localhost:7000`, log in with the generated admin password,
 and configure everything else inside **Settings**.
+
+## LLM Backends
+Odysseus talks to model servers through provider-native or OpenAI-compatible
+HTTP APIs. The compatibility list below was checked against upstream
+documentation on May 31, 2026.
+
+| Backend | How to connect | Notes |
+|---|---|---|
+| [OpenAI](https://platform.openai.com/docs/api-reference/chat/create-chat-completion) | `https://api.openai.com/v1` + API key | Chat Completions-compatible. Configure in Settings or pre-seed `OPENAI_API_KEY`. |
+| [Anthropic Claude](https://docs.anthropic.com/en/api/messages) | `https://api.anthropic.com` + API key | Uses Anthropic's Messages API, not the OpenAI path. |
+| [OpenRouter](https://openrouter.ai/docs/api-reference/chat-completion) | `https://openrouter.ai/api/v1` + API key | OpenAI-style chat completions gateway for many hosted models. |
+| [Google Gemini](https://ai.google.dev/gemini-api/docs/openai) | `https://generativelanguage.googleapis.com/v1beta/openai` + Gemini key | Gemini's OpenAI compatibility layer. |
+| [Ollama](https://docs.ollama.com/api/openai-compatibility) | `http://localhost:11434/v1` | Local OpenAI-compatible chat, models, tools, and vision support depending on model. |
+| [LM Studio](https://lmstudio.ai/docs/app/api/endpoints/openai) | `http://localhost:1234/v1` | Start LM Studio's local server, then add the base URL in Settings. |
+| [vLLM](https://docs.vllm.ai/en/latest/cli/serve/) | Usually `http://host:8000/v1` | Cookbook can launch `vllm serve`; endpoint discovery scans common vLLM ports. |
+| [SGLang](https://docs.sglang.ai/basic_usage/openai_api.html) | Usually `http://host:30000/v1` | Cookbook can launch `python -m sglang.launch_server`. |
+| [llama.cpp llama-server](https://www.mintlify.com/ggml-org/llama.cpp/inference/server) | Usually `http://host:8080/v1` | GGUF-first local serving. Cookbook also falls back to llama-cpp-python when needed. |
+| [llama-cpp-python](https://llama-cpp-python.readthedocs.io/en/stable/server/) | User-chosen `/v1` base URL | OpenAI-compatible Python server for GGUF models. |
+| [text-generation-webui](https://github.com/oobabooga/text-generation-webui/wiki/12-%E2%80%90-OpenAI-API) | Usually `http://host:5000/v1` | Its OpenAI API extension exposes chat/completions-style endpoints. |
+| [KoboldCpp](https://github.com/LostRuins/koboldcpp/wiki) | Usually `http://host:5001/v1` | Provides OpenAI-compatible completions and chat completions. |
+| [LocalAI](https://localai.io/) | Deployment-specific `/v1` base URL | Self-hosted OpenAI-compatible server across text, embeddings, images, and audio. |
+
+Auto-discovery probes common local OpenAI-compatible ports (`11434`, `1234`,
+`5000`, `5001`, `8000-8020`, `8080`, `30000`) on `LLM_HOST`/`LLM_HOSTS`.
+For exact URLs or hosted gateways, set `LLM_ENDPOINTS` or add the endpoint in
+Settings. OpenAI-compatible endpoints should be entered as the base URL ending
+at the provider's API prefix, for example `http://localhost:11434/v1`, not the
+full `/chat/completions` URL.
 
 ## Security Notes
 Odysseus is a self-hosted workspace with powerful local tools: shell access, file uploads, model downloads, web research, email/calendar integrations, and API tokens. Treat it like an admin console.
@@ -161,11 +244,16 @@ Key settings:
 | Variable | Default | Description |
 |---|---|---|
 | `LLM_HOST` | `localhost` | Your LLM server (e.g. `llm-host.local:8000`) |
-| `LLM_HOSTS` | -- | Comma-separated list for model discovery |
+| `LLM_HOSTS` | -- | Comma-separated hostnames, host:port pairs, or URLs for model discovery |
+| `LLM_ENDPOINTS` | -- | Comma-separated exact OpenAI-compatible base URLs to probe |
 | `OPENAI_API_KEY` | -- | Optional OpenAI key. Prefer adding providers in the app unless pre-seeding. |
 | `SEARXNG_INSTANCE` | `http://localhost:8080` | SearXNG URL. Docker overrides this to `http://searxng:8080`. |
 | `AUTH_ENABLED` | `true` | Enable/disable login |
 | `LOCALHOST_BYPASS` | `false` | Development-only auth bypass for loopback requests. Keep false for shared/network deployments. |
+| `ODYSSEUS_PORT` | `7000` | App port used by native/bootstrap runs; bootstrap writes the selected free port to `.env`. |
+| `ODYSSEUS_INTERNAL_BASE_URL` | `http://127.0.0.1:$ODYSSEUS_PORT` | Loopback URL for in-app tools that call Odysseus routes. |
+| `ODYSSEUS_SETUP_TOKEN` | -- | Optional fixed first-run setup token for automated deployments. Bootstrap normally generates one. |
+| `ODYSSEUS_ALLOW_REMOTE_FIRST_RUN_SETUP` | `false` | Allows first-run setup from non-local clients. Keep false unless behind trusted private access. |
 | `DATABASE_URL` | `sqlite:///./data/app.db` | Database connection string |
 | `CHROMADB_HOST` | `localhost` | ChromaDB host for vector memory. Docker overrides this to `chromadb`. |
 | `CHROMADB_PORT` | `8100` | ChromaDB port for manual host runs. Docker overrides this to `8000`. |
@@ -180,6 +268,8 @@ Docker Compose includes these by default:
 
 ### Optional external services
   - **Ollama** → local LLM server -- [ollama.ai](https://ollama.ai)
+  - **LM Studio** → desktop local model server -- [lmstudio.ai](https://lmstudio.ai)
+  - **vLLM / SGLang / llama.cpp / LocalAI** → self-hosted OpenAI-compatible inference servers.
 
 ## Architecture
 ```
@@ -198,6 +288,12 @@ All user data lives in `data/` (gitignored): `app.db` (sessions, messages, docum
 
 ## License
 MIT -- see [LICENSE](LICENSE) and [ACKNOWLEDGMENTS.md](ACKNOWLEDGMENTS.md).
+
+## Development Disclosure
+The macOS setup and public-distribution hardening work in this branch was
+prepared with AI assistance from OpenAI Codex using a GPT-5 model. Please do
+not describe it as assisted by any other model/version unless that model use is
+independently verified later.
 
 ```
                                   |

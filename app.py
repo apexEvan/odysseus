@@ -3,6 +3,7 @@ from dotenv import load_dotenv
 load_dotenv()
 import os
 import uuid
+import secrets
 
 import asyncio
 import logging
@@ -108,6 +109,14 @@ auth_manager = AuthManager()
 app.state.auth_manager = auth_manager
 AUTH_ENABLED = os.getenv("AUTH_ENABLED", "true").lower() != "false"
 LOCALHOST_BYPASS = os.getenv("LOCALHOST_BYPASS", "false").lower() == "true"
+
+if AUTH_ENABLED and not auth_manager.is_configured:
+    _setup_token = os.getenv("ODYSSEUS_SETUP_TOKEN") or secrets.token_urlsafe(24)
+    app.state.first_run_setup_token = _setup_token
+    _setup_port = os.getenv("ODYSSEUS_PORT", "7000")
+    logger.warning("First-run setup required. Open http://127.0.0.1:%s/login?setup_token=%s", _setup_port, _setup_token)
+else:
+    app.state.first_run_setup_token = ""
 
 if AUTH_ENABLED:
     AUTH_EXEMPT_EXACT = {

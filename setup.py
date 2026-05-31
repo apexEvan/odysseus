@@ -6,8 +6,10 @@ initial admin user. Safe to re-run (skips what already exists).
 """
 
 import os
+import platform
 import shutil
 import sys
+import json
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data")
@@ -45,6 +47,10 @@ def init_database():
 
 def create_default_admin():
     """Create an initial admin user if none exists."""
+    if os.getenv("ODYSSEUS_SKIP_ADMIN_CREATE", "").lower() in {"1", "true", "yes"}:
+        print("  [skip] admin creation disabled by ODYSSEUS_SKIP_ADMIN_CREATE")
+        return
+
     auth_path = os.path.join(DATA_DIR, "auth.json")
     if os.path.exists(auth_path):
         print("  [skip] auth.json already exists")
@@ -75,6 +81,17 @@ def create_default_admin():
         print("         Run: pip install bcrypt")
 
 
+def auth_has_users():
+    """Return True when a local auth file already contains at least one user."""
+    auth_path = os.path.join(DATA_DIR, "auth.json")
+    try:
+        with open(auth_path) as f:
+            data = json.load(f)
+    except Exception:
+        return False
+    return bool(data.get("users"))
+
+
 def create_env():
     """Copy .env.example to .env if it doesn't exist."""
     env_path = os.path.join(BASE_DIR, ".env")
@@ -89,6 +106,18 @@ def create_env():
         print("        ** Edit .env with your LLM host and API keys **")
     else:
         print("  [warn] .env.example not found — create .env manually")
+
+
+def check_python():
+    """Warn early when the active interpreter is too old."""
+    if sys.version_info < (3, 11):
+        print(f"  [warn] Python {sys.version.split()[0]} detected; Odysseus needs Python 3.11+")
+        if platform.system() == "Darwin":
+            print("         On macOS: brew install python@3.13")
+        else:
+            print("         Install Python 3.11+ with your OS package manager or pyenv.")
+    else:
+        print(f"  [ok] Python {sys.version.split()[0]}")
 
 
 def check_deps():
@@ -109,9 +138,12 @@ def check_deps():
         print("\n  [warn] tmux not found")
         print("         Cookbook uses tmux for background downloads and model serves.")
         print("         Install it with your OS package manager, for example:")
-        print("           sudo apt install tmux")
-        print("           sudo pacman -S tmux")
-        print("           sudo dnf install tmux")
+        if platform.system() == "Darwin":
+            print("           brew install tmux")
+        else:
+            print("           sudo apt install tmux")
+            print("           sudo pacman -S tmux")
+            print("           sudo dnf install tmux")
     elif os.name != "nt":
         print("  [ok] tmux installed")
 
@@ -125,27 +157,39 @@ def main():
     print("\n2. Environment file...")
     create_env()
 
-    print("\n3. Checking dependencies...")
+    print("\n3. Checking Python...")
+    check_python()
+
+    print("\n4. Checking dependencies...")
     check_deps()
 
-    print("\n4. Initializing database...")
+    print("\n5. Initializing database...")
     try:
         init_database()
     except Exception as e:
         print(f"  [warn] Database init failed: {e}")
         print("         This is OK if dependencies aren't installed yet.")
 
-    print("\n5. Creating initial admin...")
+    print("\n6. Creating initial admin...")
     try:
         create_default_admin()
     except Exception as e:
         print(f"  [warn] Admin creation failed: {e}")
 
     print("\n=== Setup complete ===")
-    print(f"\nStart the server with:")
-    print(f"  uvicorn app:app --host 0.0.0.0 --port 7000")
-    print(f"\nThen open http://localhost:7000")
-    print(f"Login with the admin username and temporary password printed above.\n")
+    default_port = "7001" if platform.system() == "Darwin" else "7000"
+    port = os.getenv("ODYSSEUS_PORT", default_port)
+    base_url = os.getenv("ODYSSEUS_INTERNAL_BASE_URL", f"http://127.0.0.1:{port}")
+    print("\nStart the server with:")
+    print(f"  ODYSSEUS_PORT={port} ODYSSEUS_INTERNAL_BASE_URL={base_url} \\")
+    print(f"    uvicorn app:app --host 127.0.0.1 --port {port}")
+    print(f"\nThen open {base_url}")
+    if auth_has_users():
+        print("Login with your existing admin account.\n")
+    elif os.getenv("ODYSSEUS_SKIP_ADMIN_CREATE", "").lower() in {"1", "true", "yes"}:
+        print("On first start, Odysseus will print a local setup URL with a one-time token.\n")
+    else:
+        print("Login with the admin username and temporary password printed above.\n")
 
 
 if __name__ == "__main__":

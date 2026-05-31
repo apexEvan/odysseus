@@ -183,7 +183,7 @@ respond with `[Name](#session-<id>)`".
 
 **PORTABILITY — CRITICAL.** Skills are shared across users. Do NOT \
 hardcode anything user-specific into the procedure:
-  - NO hostnames or IPs (e.g. `gpu-box`, `user@192.0.2.10`) — \
+  - NO hostnames or IPs (e.g. `gpu-server`, `user@192.0.2.10`) — \
     use placeholders like `<gpu_host>` or call `list_serve_presets` / \
     `list_cached_models` to discover them at runtime.
   - NO absolute filesystem paths tied to one machine (e.g. \

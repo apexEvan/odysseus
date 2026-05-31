@@ -964,6 +964,7 @@ def setup_cookbook_routes() -> APIRouter:
     class SetupRequest(BaseModel):
         host: str
         ssh_port: str | None = None
+        platform: str | None = None
 
     @router.post("/api/cookbook/setup")
     async def server_setup(request: Request, req: SetupRequest):
@@ -977,25 +978,28 @@ def setup_cookbook_routes() -> APIRouter:
             raise HTTPException(400, "Invalid ssh_port")
         pf = f"-p {port} " if port and port != "22" else ""
 
-        # Detect platform: Windows first (echo %OS% → Windows_NT), then Termux, then Linux
+        # Detect platform: Windows first (echo %OS%), then Darwin/macOS,
+        # Termux, and finally Linux.
         detect_cmd = f'ssh {pf}{host} "echo %OS%"'
-        platform = "linux"
+        platform = (req.platform or "").strip().lower() or "linux"
         try:
-            proc = await asyncio.create_subprocess_shell(
-                detect_cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
-            )
-            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=10)
-            out = stdout.decode().strip()
-            if "Windows_NT" in out:
-                platform = "windows"
-            else:
-                # Check for Termux
-                detect_cmd2 = f"ssh {pf}{host} 'test -d /data/data/com.termux && echo termux || echo linux'"
-                proc2 = await asyncio.create_subprocess_shell(
-                    detect_cmd2, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+            if platform not in {"windows", "macos", "termux", "linux"}:
+                platform = "linux"
+            if not req.platform:
+                proc = await asyncio.create_subprocess_shell(
+                    detect_cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
                 )
-                stdout2, _ = await asyncio.wait_for(proc2.communicate(), timeout=10)
-                platform = stdout2.decode().strip()
+                stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=10)
+                out = stdout.decode().strip()
+                if "Windows_NT" in out:
+                    platform = "windows"
+                else:
+                    detect_cmd2 = f"ssh {pf}{host} 'case \"$(uname -s 2>/dev/null)\" in Darwin) echo macos ;; *) test -d /data/data/com.termux && echo termux || echo linux ;; esac'"
+                    proc2 = await asyncio.create_subprocess_shell(
+                        detect_cmd2, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+                    )
+                    stdout2, _ = await asyncio.wait_for(proc2.communicate(), timeout=10)
+                    platform = stdout2.decode().strip() or "linux"
         except Exception:
             platform = "linux"
 
@@ -1019,6 +1023,17 @@ def setup_cookbook_routes() -> APIRouter:
                 "python3 -c 'from huggingface_hub import snapshot_download; print(\"OK\")'"
             )
             cmd = f"ssh {pf}{host} '{setup_script}'"
+        elif platform == "macos":
+            setup_script = (
+                "set -e; "
+                "command -v brew >/dev/null 2>&1 || { echo 'ERROR: Homebrew not found. Install from https://brew.sh/'; exit 1; }; "
+                "brew list tmux >/dev/null 2>&1 || brew install tmux; "
+                "brew list python@3.13 >/dev/null 2>&1 || brew install python@3.13; "
+                "PY=$(brew --prefix python@3.13)/bin/python3.13; "
+                "$PY -m pip install --user -q huggingface_hub hf_transfer; "
+                "$PY -c 'from huggingface_hub import snapshot_download; print(\"OK\")'"
+            )
+            cmd = f"ssh {pf}{host} {shlex.quote(setup_script)}"
         else:
             # Linux: auto-install tmux (via whichever package manager is available)
             # and huggingface_hub + hf_transfer (falling back to --user/--break-system-packages

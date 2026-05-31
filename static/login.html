@@ -300,6 +300,7 @@
 
   let mode = 'login'; // 'login' | 'signup' | 'setup'
   let signupAllowed = false;
+  const setupToken = new URLSearchParams(window.location.search).get('setup_token') || '';
 
   const rememberToggle = document.getElementById('rememberToggle');
 
@@ -307,7 +308,9 @@
     mode = m;
     errEl.style.display = 'none';
     if (m === 'setup') {
-      setupNote.textContent = 'First-time setup — create your admin account';
+      setupNote.textContent = setupToken
+        ? 'First-time setup - create your admin account'
+        : 'First-time setup requires the setup link printed in the server terminal.';
       setupNote.style.display = 'block';
       confirmGroup.style.display = 'block';
       submitBtn.textContent = 'Create Admin Account';
@@ -414,7 +417,7 @@
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           credentials: 'same-origin',
-          body: JSON.stringify({ username, password })
+          body: JSON.stringify({ username, password, setup_token: mode === 'setup' ? setupToken : undefined })
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.detail || 'Account creation failed');

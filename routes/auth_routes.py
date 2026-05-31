@@ -39,6 +39,7 @@ class LoginRequest(BaseModel):
 class SetupRequest(BaseModel):
     username: str
     password: str
+    setup_token: Optional[str] = None
 
 
 class SignupRequest(BaseModel):
@@ -71,6 +72,18 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
     _signup_limiter = RateLimiter(max_requests=3, window_seconds=300)
     _setup_limiter = RateLimiter(max_requests=3, window_seconds=300)
 
+    def _is_loopback_request(request: Request) -> bool:
+        client_host = request.client.host if request.client else ""
+        return client_host in {"127.0.0.1", "::1", "localhost"}
+
+    def _remote_first_run_allowed() -> bool:
+        return os.getenv("ODYSSEUS_ALLOW_REMOTE_FIRST_RUN_SETUP", "false").lower() == "true"
+
+    def _valid_setup_token(body: SetupRequest, request: Request) -> bool:
+        expected = getattr(request.app.state, "first_run_setup_token", "") or ""
+        supplied = (body.setup_token or request.query_params.get("token") or "").strip()
+        return bool(expected and supplied and supplied == expected)
+
     def _get_current_user(request: Request) -> Optional[str]:
         token = request.cookies.get(SESSION_COOKIE)
         return auth_manager.get_username_for_token(token)
@@ -82,11 +95,16 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
             raise HTTPException(429, "Too many requests — try again later")
         if auth_manager.is_configured:
             raise HTTPException(400, "Already configured")
+        if not _is_loopback_request(request) and not _remote_first_run_allowed():
+            raise HTTPException(403, "First-run setup is restricted to localhost")
+        if not _valid_setup_token(body, request):
+            raise HTTPException(403, "Invalid or missing setup token")
         if len(body.password) < 8:
             raise HTTPException(400, "Password must be at least 8 characters")
         ok = auth_manager.setup(body.username, body.password)
         if not ok:
             raise HTTPException(500, "Setup failed")
+        request.app.state.first_run_setup_token = ""
         return {"ok": True, "message": "Admin account created"}
 
     @router.post("/signup")
@@ -152,6 +170,9 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
         token = request.cookies.get(SESSION_COOKIE)
         result = auth_manager.status(token)
         result["signup_enabled"] = auth_manager.signup_enabled
+        if not auth_manager.is_configured:
+            result["setup_token_required"] = True
+            result["setup_local_only"] = not _remote_first_run_allowed()
         # Include the caller's effective privileges so the frontend can
         # hide / dim UI controls the user isn't allowed to use. Admins get
         # ADMIN_PRIVILEGES (everything on), regular users get their stored

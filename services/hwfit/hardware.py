@@ -1,5 +1,6 @@
 import os
 import platform
+import re
 import subprocess
 import time
 
@@ -35,6 +36,96 @@ def _run(cmd):
     except Exception:
         pass
     return None
+
+
+def _is_macos():
+    if _remote_platform == "macos":
+        return True
+    return not _remote_host and platform.system() == "Darwin"
+
+
+def _sysctl(name):
+    return _run(["sysctl", "-n", name])
+
+
+def _get_macos_ram_gb():
+    raw = _sysctl("hw.memsize")
+    try:
+        return int(raw.strip()) / (1024**3) if raw else 0.0
+    except Exception:
+        return 0.0
+
+
+def _get_macos_available_ram_gb():
+    out = _run(["vm_stat"])
+    if not out:
+        total = _get_macos_ram_gb()
+        return total * 0.7 if total else 0.0
+
+    page_size = 16384
+    m = re.search(r"page size of (\d+) bytes", out)
+    if m:
+        page_size = int(m.group(1))
+
+    pages = {}
+    for line in out.splitlines():
+        if ":" not in line:
+            continue
+        key, val = line.split(":", 1)
+        m = re.search(r"\d+", val.replace(".", ""))
+        if m:
+            pages[key.strip()] = int(m.group(0))
+
+    available_pages = (
+        pages.get("Pages free", 0)
+        + pages.get("Pages inactive", 0)
+        + pages.get("Pages speculative", 0)
+        + pages.get("Pages purgeable", 0)
+    )
+    if available_pages <= 0:
+        total = _get_macos_ram_gb()
+        return total * 0.7 if total else 0.0
+    return (available_pages * page_size) / (1024**3)
+
+
+def _get_macos_cpu_name():
+    return _sysctl("machdep.cpu.brand_string") or platform.processor() or "Apple Silicon"
+
+
+def _detect_macos_gpu(total_ram_gb, available_ram_gb):
+    machine = (_sysctl("hw.machine") or platform.machine() or "").lower()
+    is_apple_silicon = machine in {"arm64", "aarch64"} or "arm" in machine
+    if not is_apple_silicon:
+        return None
+
+    display = _run(["system_profiler", "SPDisplaysDataType"]) or ""
+    gpu_name = None
+    for line in display.splitlines():
+        if "Chipset Model:" in line:
+            gpu_name = line.split(":", 1)[1].strip()
+            break
+    if not gpu_name:
+        cpu_name = _get_macos_cpu_name()
+        gpu_name = cpu_name if cpu_name.lower().startswith("apple ") else "Apple Silicon GPU"
+
+    usable_gb = available_ram_gb or (total_ram_gb * 0.7 if total_ram_gb else 0)
+    usable_gb = round(max(0.0, usable_gb), 1)
+    return {
+        "gpu_name": gpu_name,
+        "gpu_vram_gb": usable_gb,
+        "gpu_count": 1,
+        "gpus": [{"index": 0, "name": gpu_name, "vram_gb": usable_gb}],
+        "gpu_groups": [{
+            "name": gpu_name,
+            "vram_each": usable_gb,
+            "count": 1,
+            "indices": [0],
+            "vram_total": usable_gb,
+        }],
+        "homogeneous": True,
+        "backend": "metal",
+        "unified_memory": True,
+    }
 
 
 def _group_gpus(gpus):
@@ -234,6 +325,9 @@ def _parse_meminfo():
 
 
 def _get_ram_gb():
+    if _is_macos():
+        return _get_macos_ram_gb()
+
     meminfo = _parse_meminfo()
     if "MemTotal" in meminfo:
         return meminfo["MemTotal"] / (1024**2)
@@ -250,6 +344,9 @@ def _get_ram_gb():
 
 
 def _get_available_ram_gb():
+    if _is_macos():
+        return _get_macos_available_ram_gb()
+
     meminfo = _parse_meminfo()
     if "MemAvailable" in meminfo:
         return meminfo["MemAvailable"] / (1024**2)
@@ -257,6 +354,9 @@ def _get_available_ram_gb():
 
 
 def _get_cpu_name():
+    if _is_macos():
+        return _get_macos_cpu_name()
+
     text = _read_file("/proc/cpuinfo")
     if text:
         for line in text.split("\n"):
@@ -393,6 +493,52 @@ def detect_system(host="", ssh_port="", platform="", fresh=False):
             return result
         # If Windows detection failed, return error
         result = {"error": f"Cannot connect to {host}", "host": host}
+        _remote_host = None
+        _remote_platform = None
+        _cache_by_host[cache_key] = (now, result)
+        return result
+
+    # macOS: use sysctl/vm_stat/system_profiler. Apple Silicon has unified
+    # memory, so expose the currently available RAM as the Metal memory budget
+    # for MLX/llama.cpp style local model suggestions.
+    if _is_macos():
+        total_ram = round(_get_ram_gb(), 1)
+        available_ram = round(_get_available_ram_gb(), 1)
+        cpu_cores = _get_cpu_count()
+        cpu_name = _get_cpu_name()
+        gpu_info = _detect_macos_gpu(total_ram, available_ram)
+        if gpu_info:
+            result = {
+                "platform": "macos",
+                "total_ram_gb": total_ram,
+                "available_ram_gb": available_ram,
+                "cpu_cores": cpu_cores,
+                "cpu_name": cpu_name,
+                "has_gpu": True,
+                "gpu_name": gpu_info["gpu_name"],
+                "gpu_vram_gb": gpu_info["gpu_vram_gb"],
+                "gpu_count": gpu_info["gpu_count"],
+                "gpus": gpu_info.get("gpus", []),
+                "gpu_groups": gpu_info.get("gpu_groups", []),
+                "homogeneous": gpu_info.get("homogeneous", True),
+                "backend": gpu_info["backend"],
+                "unified_memory": gpu_info.get("unified_memory", True),
+            }
+        else:
+            arch_out = (_sysctl("hw.machine") or platform.machine()).lower()
+            result = {
+                "platform": "macos",
+                "total_ram_gb": total_ram,
+                "available_ram_gb": available_ram,
+                "cpu_cores": cpu_cores,
+                "cpu_name": cpu_name,
+                "has_gpu": False,
+                "gpu_name": None,
+                "gpu_vram_gb": None,
+                "gpu_count": 0,
+                "backend": "cpu_arm" if "arm" in arch_out else "cpu_x86",
+                "gpu_error": None,
+            }
         _remote_host = None
         _remote_platform = None
         _cache_by_host[cache_key] = (now, result)
