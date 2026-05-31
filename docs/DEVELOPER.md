@@ -89,6 +89,13 @@ evaluation metadata and stores normalized benchmark entries in the catalog.
 Models without structured benchmark metadata still receive a clearly marked
 heuristic quality score.
 
+Cookbook model type labels are compatibility hints derived from catalog metadata,
+not host-specific probes. `model_type` describes the package/runtime family
+such as GGUF, MLX, AWQ, GPTQ, FP8, HF weights, or Diffusers. `runtime_hint`,
+`platform_hint`, and `compatibility` give the user-facing explanation. Keep this
+separate from `run_mode`, which describes where the current hardware scan would
+execute the model (`gpu`, `cpu_offload`, `cpu_only`, or `no_fit`).
+
 ## Browser MCP
 
 The Browser MCP is an optional Model Context Protocol server that gives the

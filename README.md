@@ -233,6 +233,11 @@ fit comfort. Benchmark scores are read from the local model catalog when the
 model card exposes structured Hugging Face evaluation metadata; otherwise the
 quality badge is marked as heuristic.
 
+Cookbook rows also distinguish the model package/runtime type from the current
+run mode. For example, GGUF is shown as portable across llama.cpp/Ollama/LM
+Studio on macOS, Windows, and Linux; MLX is labeled for Apple Silicon; and
+AWQ/GPTQ/FP8 are labeled for GPU server runtimes such as vLLM or SGLang.
+
 ### Context Windows
 Each model endpoint can optionally set a **Context** value in Settings. Leave it
 blank to auto-detect from the backend or known model metadata. Drag the slider

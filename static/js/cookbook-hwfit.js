@@ -699,6 +699,7 @@ export const _hwfitColumns = [
   { key: null,    label: 'Model',  cls: 'hwfit-name' },
   { key: 'params',label: 'Param', cls: 'hwfit-c-params' },
   { key: null,    label: 'Quant',  cls: 'hwfit-c-quant' },
+  { key: null,    label: 'Type',   cls: 'hwfit-c-type' },
   { key: 'vram',  label: 'VRAM',   cls: 'hwfit-c-vram' },
   { key: 'context',label: 'Ctx',   cls: 'hwfit-c-ctx' },
   { key: 'speed', label: 'Speed',  cls: 'hwfit-c-speed' },
@@ -753,6 +754,8 @@ export function _hwfitRenderList(el, models) {
     const fitLabel = (m.fit_level || '').replace('_', ' ');
     const modeLabel = (m.run_mode || '').replace('_', '+');
     const vramLabel = m.required_gb ? m.required_gb.toFixed(1) + 'G' : '?';
+    const typeLabel = m.model_type || (m.is_image_gen ? 'Diffusers' : '?');
+    const typeTitle = [m.model_type_label, m.runtime_hint, m.platform_hint].filter(Boolean).join(' · ');
     const moeBadge = m.is_moe ? '<span class="hwfit-badge hwfit-moe">MoE</span>' : '';
     const imgBadge = m.is_image_gen ? '<span class="hwfit-badge" style="background:color-mix(in srgb, var(--red) 20%, transparent);color:var(--red);font-size:8px;padding:1px 4px;border-radius:3px;margin-left:4px;">IMG</span>' : '';
     const dlDot = (_cachedModelIds && (_cachedModelIds.has(m.name) || [..._cachedModelIds].some(id => id === m.name?.split('/').pop()))) ? '<span class="hwfit-dl-dot" title="Downloaded">\u25CF</span>' : '';
@@ -761,6 +764,7 @@ export function _hwfitRenderList(el, models) {
     html += `<span class="hwfit-col hwfit-name">${modelLogo(m.name)}${esc(m.name?.split('/').pop() || m.name)}${moeBadge}${imgBadge}${dlDot}</span>`;
     html += `<span class="hwfit-col hwfit-c-params">${esc(pcount)}</span>`;
     html += `<span class="hwfit-col hwfit-c-quant">${esc(m.quant || '?')}</span>`;
+    html += `<span class="hwfit-col hwfit-c-type" title="${esc(typeTitle || typeLabel)}">${esc(typeLabel)}</span>`;
     html += `<span class="hwfit-col hwfit-c-vram">${vramLabel}</span>`;
     html += `<span class="hwfit-col hwfit-c-ctx">${m.is_image_gen ? '\u2014' : ctx}</span>`;
     html += `<span class="hwfit-col hwfit-c-speed">${m.is_image_gen ? '\u2014' : tps + ' t/s'}</span>`;
@@ -868,6 +872,15 @@ export function _expandModelRow(row, modelData) {
       return `${esc(String(name))}: ${Number.isFinite(score) ? score.toFixed(1) : esc(String(b.score))}`;
     }).join(' · ');
     html += `<div class="hwfit-panel-quality"><span>Quality ${Number(quality).toFixed(1)}</span><span>${esc(qSource)}</span>${details ? `<small>${details}</small>` : ''}</div>`;
+  }
+  const compat = Array.isArray(modelData.compatibility) ? modelData.compatibility.join(' · ') : '';
+  if (modelData.model_type || modelData.runtime_hint || compat) {
+    html += `<div class="hwfit-panel-compat">`;
+    if (modelData.model_type_label || modelData.model_type) html += `<span>${esc(modelData.model_type_label || modelData.model_type)}</span>`;
+    if (modelData.runtime_hint) html += `<span>${esc(modelData.runtime_hint)}</span>`;
+    if (modelData.platform_hint) html += `<span>${esc(modelData.platform_hint)}</span>`;
+    if (compat) html += `<small>${esc(compat)}</small>`;
+    html += `</div>`;
   }
   html += `<div class="hwfit-panel-actions">`;
   html += `<button class="cookbook-btn hwfit-dl-btn">Download</button>`;

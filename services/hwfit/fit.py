@@ -97,6 +97,78 @@ BENCHMARK_ALIASES = {
 FIT_PRIORITY = {"perfect": 3, "good": 2, "marginal": 1, "too_tight": 0}
 
 
+def _model_package_info(model):
+    quant = str(model.get("quantization") or model.get("quant") or "").strip()
+    q = quant.upper()
+    name_blob = " ".join(
+        str(model.get(k) or "") for k in ("name", "repo_id", "path", "architecture", "pipeline_tag")
+    ).lower()
+
+    if model.get("is_image_gen") or model.get("is_diffusion"):
+        return {
+            "model_type": "Diffusers",
+            "model_type_label": "Diffusers",
+            "runtime_hint": "Diffusers",
+            "platform_hint": "GPU image pipeline",
+            "compatibility": ["NVIDIA/AMD GPU", "Apple Silicon", "Linux/macOS"],
+        }
+    if q.startswith("MLX") or "mlx" in name_blob:
+        return {
+            "model_type": "MLX",
+            "model_type_label": "MLX",
+            "runtime_hint": "MLX / LM Studio",
+            "platform_hint": "Apple Silicon",
+            "compatibility": ["macOS", "Apple Silicon", "Metal"],
+        }
+    if model.get("gguf_sources") or model.get("is_gguf") or q == "GGUF" or q.startswith("Q") or q.startswith("IQ") or "gguf" in name_blob:
+        return {
+            "model_type": "GGUF",
+            "model_type_label": "GGUF",
+            "runtime_hint": "llama.cpp / Ollama / LM Studio",
+            "platform_hint": "CPU/GPU portable",
+            "compatibility": ["macOS", "Windows", "Linux", "CPU", "NVIDIA/AMD/Apple GPU"],
+        }
+    if q.startswith("AWQ"):
+        return {
+            "model_type": "AWQ",
+            "model_type_label": "AWQ",
+            "runtime_hint": "vLLM / SGLang",
+            "platform_hint": "Linux GPU server",
+            "compatibility": ["NVIDIA GPU", "AMD ROCm", "Linux"],
+        }
+    if q.startswith("GPTQ"):
+        return {
+            "model_type": "GPTQ",
+            "model_type_label": "GPTQ",
+            "runtime_hint": "vLLM / SGLang",
+            "platform_hint": "Linux GPU server",
+            "compatibility": ["NVIDIA GPU", "AMD ROCm", "Linux"],
+        }
+    if q == "FP8" or "FP8" in q:
+        return {
+            "model_type": "FP8",
+            "model_type_label": "FP8",
+            "runtime_hint": "vLLM / SGLang",
+            "platform_hint": "Datacenter GPU",
+            "compatibility": ["NVIDIA/AMD GPU", "Linux"],
+        }
+    if q in ("F16", "FP16", "BF16", "F32", "FP32") or "safetensors" in name_blob:
+        return {
+            "model_type": "HF",
+            "model_type_label": "HF weights",
+            "runtime_hint": "vLLM / SGLang / Transformers",
+            "platform_hint": "GPU server",
+            "compatibility": ["NVIDIA/AMD GPU", "Linux", "Transformers"],
+        }
+    return {
+        "model_type": "HF",
+        "model_type_label": "HF weights",
+        "runtime_hint": "Backend dependent",
+        "platform_hint": "Check backend",
+        "compatibility": ["Backend dependent"],
+    }
+
+
 def _lookup_bandwidth(gpu_name):
     if not gpu_name:
         return None
@@ -379,6 +451,7 @@ def analyze_model(model, system, target_quant=None):
         return None
 
     use_case = infer_use_case(model)
+    package_info = _model_package_info(model)
     has_gpu = system.get("has_gpu", False)
     gpu_vram = (system.get("gpu_vram_gb") or 0) if has_gpu else 0
     gpu_count = system.get("gpu_count", 1) or 1
@@ -466,6 +539,7 @@ def analyze_model(model, system, target_quant=None):
             "quality_source": quality_source,
             "benchmark_details": benchmark_details,
             "fit_possible": False,
+            **package_info,
             "gguf_sources": model.get("gguf_sources", []),
             "context_length": model.get("context_length", 4096),
         }
@@ -522,6 +596,7 @@ def analyze_model(model, system, target_quant=None):
         "quality_source": quality_source,
         "benchmark_details": benchmark_details,
         "fit_possible": True,
+        **package_info,
         "gguf_sources": model.get("gguf_sources", []),
         "context_length": model.get("context_length", 4096),
     }
@@ -583,6 +658,7 @@ def rank_models(system, use_case=None, limit=50, search=None, sort="score", quan
                 "quality_source": "curated",
                 "benchmark_details": [],
                 "fit_possible": bool(im["fits"]),
+                **_model_package_info({"is_image_gen": True}),
                 "gguf_sources": [],
                 "is_image_gen": True,
                 "capabilities": im.get("capabilities", []),
@@ -604,9 +680,10 @@ def rank_models(system, use_case=None, limit=50, search=None, sort="score", quan
 
     for m in models:
         native_q = m.get("quantization", "")
+        native_q_l = native_q.lower()
 
         # Drop MLX models on non-Apple hardware
-        if not apple_silicon and native_q.startswith("mlx-"):
+        if not apple_silicon and native_q_l.startswith("mlx-"):
             continue
 
         # Format filter: AWQ tab → only AWQ models, FP8 tab → only FP8 models
