@@ -25,6 +25,8 @@ from routes.model_routes import (
     _is_chat_model,
     _classify_endpoint,
     _form_context_window,
+    _infer_quant_label,
+    _parse_params_b,
     _probe_endpoint,
     _truthy,
     _PROVIDER_CURATED,
@@ -209,6 +211,17 @@ class TestSetupProbeSafety:
         assert _form_context_window("16384") == 16384
         with pytest.raises(Exception):
             _form_context_window("128")
+
+    def test_parse_params_from_model_names(self):
+        assert _parse_params_b("qwen3.5:4b") == 4
+        assert _parse_params_b("meta-llama/Llama-3.1-8B-Instruct") == 8
+        assert _parse_params_b("small-355M") == pytest.approx(0.355)
+        assert _parse_params_b("llama3.2:latest") is None
+
+    def test_infer_quant_label(self):
+        assert _infer_quant_label("model-q4_k_m") == "Q4_K_M"
+        assert _infer_quant_label("model-FP16") == "F16"
+        assert _infer_quant_label("model-int8") == "Q8_0"
 
     def test_keyed_probe_does_not_fallback_to_curated_on_auth_failure(self, monkeypatch):
         monkeypatch.setattr(endpoint_resolver, "resolve_url", lambda url: url, raising=False)

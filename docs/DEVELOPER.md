@@ -65,6 +65,11 @@ The public UI label should stay plain: **Context** means "Odysseus prompt
 budget in tokens." It is not a promise that the backend has reloaded its KV
 cache at that size.
 
+The Settings endpoint row also displays a best-effort memory estimate. It uses
+the existing hardware detector for total/available memory, Ollama `/api/ps`
+metadata when available, and a conservative model-name heuristic otherwise.
+Treat this as a fit warning for humans, not scheduling logic.
+
 ## Browser MCP
 
 The Browser MCP is an optional Model Context Protocol server that gives the

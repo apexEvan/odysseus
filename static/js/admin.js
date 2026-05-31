@@ -280,6 +280,54 @@ function _isLocalEndpoint(url) {
   } catch { return false; }
 }
 
+function _fmtCtxTokens(value) {
+  const n = Number(value) || 0;
+  if (!n) return 'Auto';
+  if (n >= 1000000) return (n / 1000000).toFixed(1).replace(/\.0$/, '') + 'M';
+  if (n >= 1000) return Math.round(n / 1000) + 'K';
+  return String(n);
+}
+
+function _fmtGb(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return '--';
+  return n >= 10 ? n.toFixed(1) : n.toFixed(2);
+}
+
+function _ctxSliderMax(value) {
+  return Math.max(262144, Number(value) || 0);
+}
+
+function _showCtxInfo(anchor, estimate) {
+  document.querySelectorAll('.adm-ctx-popover').forEach(p => p.remove());
+  const pop = document.createElement('div');
+  pop.className = 'adm-ctx-popover';
+  const lines = [
+    'Context is the Odysseus prompt budget for trimming, compaction, and usage meters.',
+    'It does not force every backend to reload at that size.',
+  ];
+  if (estimate && estimate.local_memory_relevant) {
+    lines.push(`Estimate source: ${estimate.source || 'local heuristic'}.`);
+    if (estimate.loaded_total_gb) lines.push(`Currently loaded: ${_fmtGb(estimate.loaded_total_gb)} GB.`);
+  } else if (estimate) {
+    lines.push('Hosted API memory runs on the provider side, not this machine.');
+  }
+  lines.push('For lower local memory, set the same context in Ollama, vLLM, SGLang, or llama.cpp.');
+  pop.textContent = lines.join(' ');
+  document.body.appendChild(pop);
+  const rect = anchor.getBoundingClientRect();
+  pop.style.top = (rect.bottom + 6) + 'px';
+  pop.style.left = Math.min(rect.left, window.innerWidth - 310) + 'px';
+  setTimeout(() => {
+    document.addEventListener('click', function close(e) {
+      if (!pop.contains(e.target) && e.target !== anchor) {
+        pop.remove();
+        document.removeEventListener('click', close);
+      }
+    });
+  }, 0);
+}
+
 async function loadEndpoints() {
   const listLocal = el('adm-epList-local');
   const listApi = el('adm-epList-api');
@@ -316,6 +364,8 @@ async function loadEndpoints() {
       const visibleCount = ep.models.length;
       const totalCount = visibleCount + (ep.hidden_count || 0);
       const ctxVal = ep.context_window ? String(ep.context_window) : '';
+      const ctxSliderValue = ctxVal || '32768';
+      const ctxSliderMax = _ctxSliderMax(ctxSliderValue);
       // `ep.models` is the *visible* set — when every model is hidden it's
       // empty, but we still need to render the expand panel so the user can
       // un-hide them. Gate on the total instead.
@@ -336,10 +386,15 @@ async function loadEndpoints() {
               ${hasModels ? '<span style="font-size:10px;opacity:0.4;">Click to manage models</span>' : ''}
             </div>
             <div style="display:flex;gap:4px;align-items:center;">
-              <label title="Odysseus prompt context budget in tokens. Leave empty to auto-detect." style="display:flex;align-items:center;gap:4px;font-size:10px;opacity:0.72;">
-                <span>Ctx</span>
-                <input type="number" min="512" max="4000000" step="1024" placeholder="Auto" value="${esc(ctxVal)}" data-adm-ctx-window="${ep.id}" style="width:82px;padding:4px 5px;font-size:11px;">
-              </label>
+              <div class="adm-ctx-control" data-adm-ctx-control="${ep.id}" data-adm-ctx-model="${esc((ep.models && ep.models[0]) || '')}">
+                <div class="adm-ctx-head">
+                  <span>Ctx</span>
+                  <button type="button" class="adm-ctx-info-btn" data-adm-ctx-info="${ep.id}" title="Context and memory details" aria-label="Context and memory details">i</button>
+                </div>
+                <input type="range" min="512" max="${ctxSliderMax}" step="1024" value="${esc(ctxSliderValue)}" data-adm-ctx-range="${ep.id}">
+                <input type="number" min="512" max="4000000" step="1024" placeholder="Auto" value="${esc(ctxVal)}" data-adm-ctx-window="${ep.id}">
+                <span class="adm-ctx-memory" data-adm-ctx-memory="${ep.id}">Memory --</span>
+              </div>
               <button class="admin-btn-sm" data-adm-toggle-ep="${ep.id}">${ep.is_enabled ? 'Disable' : 'Enable'}</button>
               <button class="admin-btn-delete" data-adm-del-ep="${ep.id}" data-adm-ep-online="${ep.online ? '1' : '0'}">Delete</button>
               ${hasModels ? '<svg class="admin-user-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="opacity:0.3;transition:transform 0.2s,opacity 0.2s;"><polyline points="6 9 12 15 18 9"/></svg>' : ''}
@@ -384,41 +439,102 @@ async function loadEndpoints() {
     queryAll('[data-adm-toggle-ep]').forEach(btn => {
       btn.addEventListener('click', async (e) => { e.stopPropagation(); await fetch(`/api/model-endpoints/${btn.dataset.admToggleEp}`, { method: 'PATCH' }); loadEndpoints(); });
     });
-    queryAll('[data-adm-ctx-window]').forEach(input => {
-      input.addEventListener('click', e => e.stopPropagation());
-      input.addEventListener('keydown', e => {
-        if (e.key === 'Enter') {
-          e.preventDefault();
-          input.blur();
-        }
+    const saveEndpointContext = async (epId, raw) => {
+      const payload = { context_window: raw ? Number(raw) : null };
+      const msg = el('adm-epMsg');
+      const res = await fetch(`/api/model-endpoints/${epId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify(payload),
       });
-      input.addEventListener('change', async (e) => {
-        e.stopPropagation();
-        const epId = input.dataset.admCtxWindow;
-        const raw = (input.value || '').trim();
-        const payload = { context_window: raw ? Number(raw) : null };
-        const msg = el('adm-epMsg');
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(d.detail || 'Failed to save context');
+      if (msg) {
+        msg.textContent = raw ? `Context budget set to ${_fmtCtxTokens(raw)} tokens` : 'Context budget set to auto';
+        msg.className = 'admin-success';
+      }
+      return d;
+    };
+    queryAll('[data-adm-ctx-control]').forEach(control => {
+      const epId = control.dataset.admCtxControl;
+      const slider = control.querySelector('[data-adm-ctx-range]');
+      const input = control.querySelector('[data-adm-ctx-window]');
+      const mem = control.querySelector('[data-adm-ctx-memory]');
+      const info = control.querySelector('[data-adm-ctx-info]');
+      const syncMemory = async () => {
+        if (!mem) return;
+        const raw = (input?.value || slider?.value || '').trim();
+        const model = control.dataset.admCtxModel || '';
+        mem.textContent = 'Memory checking...';
         try {
-          const res = await fetch(`/api/model-endpoints/${epId}`, {
-            method: 'PATCH',
-            headers: { 'Content-Type': 'application/json' },
-            credentials: 'same-origin',
-            body: JSON.stringify(payload),
-          });
-          const d = await res.json().catch(() => ({}));
-          if (!res.ok) throw new Error(d.detail || 'Failed to save context');
-          if (msg) {
-            msg.textContent = raw ? `Context budget set to ${raw} tokens` : 'Context budget set to auto';
-            msg.className = 'admin-success';
+          const params = new URLSearchParams();
+          if (raw) params.set('context_window', raw);
+          if (model) params.set('model', model);
+          const res = await fetch(`/api/model-endpoints/${epId}/memory-estimate?${params.toString()}`, { credentials: 'same-origin' });
+          const d = await res.json();
+          control._ctxEstimate = d;
+          if (!d.local_memory_relevant) {
+            mem.textContent = 'Provider-side memory';
+          } else if (d.estimated_total_gb && d.total_memory_gb) {
+            mem.textContent = `${_fmtGb(d.estimated_total_gb)} / ${_fmtGb(d.total_memory_gb)} GB`;
+            mem.dataset.status = d.status || '';
+            mem.title = `${d.source || 'estimate'}: weights ${_fmtGb(d.weights_gb)} GB + context ${_fmtGb(d.kv_cache_gb)} GB`;
+          } else if (d.loaded_total_gb && d.total_memory_gb) {
+            mem.textContent = `${_fmtGb(d.loaded_total_gb)} / ${_fmtGb(d.total_memory_gb)} GB loaded`;
+          } else {
+            mem.textContent = 'Memory unknown';
           }
-          loadEndpoints();
-        } catch (err) {
-          if (msg) {
-            msg.textContent = err.message || 'Failed to save context';
-            msg.className = 'admin-error';
-          }
+        } catch {
+          mem.textContent = 'Memory unavailable';
         }
-      });
+      };
+      control.addEventListener('click', e => e.stopPropagation());
+      if (slider && input) {
+        slider.addEventListener('input', () => {
+          input.value = slider.value;
+          if (mem) mem.textContent = `${_fmtCtxTokens(slider.value)} selected`;
+        });
+        slider.addEventListener('change', async () => {
+          try {
+            await saveEndpointContext(epId, slider.value);
+            await syncMemory();
+          } catch (err) {
+            const msg = el('adm-epMsg');
+            if (msg) { msg.textContent = err.message || 'Failed to save context'; msg.className = 'admin-error'; }
+          }
+        });
+      }
+      if (input) {
+        input.addEventListener('keydown', e => {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            input.blur();
+          }
+        });
+        input.addEventListener('change', async () => {
+          const raw = (input.value || '').trim();
+          if (slider && raw) {
+            const n = Number(raw);
+            if (n > Number(slider.max)) slider.max = String(n);
+            slider.value = String(n);
+          }
+          try {
+            await saveEndpointContext(epId, raw);
+            await syncMemory();
+          } catch (err) {
+            const msg = el('adm-epMsg');
+            if (msg) { msg.textContent = err.message || 'Failed to save context'; msg.className = 'admin-error'; }
+          }
+        });
+      }
+      if (info) {
+        info.addEventListener('click', e => {
+          e.stopPropagation();
+          _showCtxInfo(info, control._ctxEstimate);
+        });
+      }
+      syncMemory();
     });
     queryAll('[data-adm-copy-url]').forEach(btn => {
       btn.addEventListener('click', (e) => {

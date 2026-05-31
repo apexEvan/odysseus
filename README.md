@@ -230,9 +230,11 @@ full `/chat/completions` URL.
 
 ### Context Windows
 Each model endpoint can optionally set a **Context** value in Settings. Leave it
-blank to auto-detect from the backend or known model metadata. Set it when you
-want Odysseus to treat an endpoint as a smaller or larger prompt budget for
-chat trimming, compaction, and context-usage reporting.
+blank to auto-detect from the backend or known model metadata. Drag the slider
+or enter a token count when you want Odysseus to treat an endpoint as a smaller
+or larger prompt budget for chat trimming, compaction, and context-usage
+reporting. For local endpoints, Settings also shows an approximate model +
+context memory estimate against the machine's detected memory pool.
 
 This setting is intentionally backend-neutral: Odysseus does not send
 non-standard context fields to cloud APIs or OpenAI-compatible servers that may
