@@ -17,6 +17,7 @@ from src.llm_core import _detect_provider, ANTHROPIC_MODELS
 from src.settings import load_settings as _load_settings, save_settings as _save_settings
 from src.endpoint_resolver import normalize_base as _normalize_base, build_chat_url, build_headers
 from src.auth_helpers import owner_filter
+from src.model_context import DEFAULT_CONTEXT, get_context_length, normalize_context_window
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +29,164 @@ def _anthropic_api_root(base: str) -> str:
     if host.endswith("anthropic.com") and base.endswith("/v1"):
         return base[:-3].rstrip("/")
     return base
+
+
+def _form_context_window(value: Any) -> Optional[int]:
+    try:
+        return normalize_context_window(value)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+def _parse_params_b(text: str) -> Optional[float]:
+    """Extract a parameter count from strings like '4.7B', '355M', or 'qwen:4b'."""
+    haystack = (text or "").strip()
+    if not haystack:
+        return None
+    for pattern in (
+        r"(\d+(?:\.\d+)?)\s*([bBmM])\b",
+        r"[:/_-](\d+(?:\.\d+)?)\s*([bBmM])(?:[^a-zA-Z]|$)",
+    ):
+        match = re.search(pattern, haystack)
+        if not match:
+            continue
+        value = float(match.group(1))
+        unit = match.group(2).lower()
+        return value if unit == "b" else value / 1000.0
+    return None
+
+
+def _infer_quant_label(text: str) -> str:
+    value = (text or "").lower()
+    if any(k in value for k in ("fp16", "f16", "bf16")):
+        return "F16"
+    if "fp8" in value:
+        return "FP8"
+    if any(k in value for k in ("q8", "8bit", "int8")):
+        return "Q8_0"
+    if "q6" in value:
+        return "Q6_K"
+    if "q5" in value:
+        return "Q5_K_M"
+    if any(k in value for k in ("q4", "4bit", "int4", "awq", "gptq")):
+        return "Q4_K_M"
+    if "q3" in value:
+        return "Q3_K_M"
+    if "q2" in value:
+        return "Q2_K"
+    return "Q4_K_M"
+
+
+def _ollama_root_for(base_url: str) -> Optional[str]:
+    parsed = urlparse(base_url or "")
+    host = (parsed.hostname or "").lower()
+    if host not in {"localhost", "127.0.0.1", "::1"} or parsed.port != 11434:
+        return None
+    return f"{parsed.scheme or 'http'}://{parsed.netloc}"
+
+
+def _ollama_loaded_model(root: str, model: str) -> Dict[str, Any]:
+    try:
+        resp = httpx.get(f"{root.rstrip('/')}/api/ps", timeout=1.5)
+        if not resp.is_success:
+            return {}
+        for item in (resp.json().get("models") or []):
+            name = item.get("model") or item.get("name") or ""
+            if name == model or name.split("/")[-1] == model.split("/")[-1]:
+                return item
+    except Exception:
+        return {}
+    return {}
+
+
+def _endpoint_memory_estimate(base_url: str, model: str, context_window: Optional[int]) -> Dict[str, Any]:
+    """Estimate local memory impact for Settings UI hints.
+
+    This is intentionally approximate. It is a user-facing warning/fit hint, not
+    a scheduler guarantee, and it avoids sending backend-specific knobs.
+    """
+    from services.hwfit.hardware import detect_system
+    from services.hwfit.models import QUANT_BPP
+
+    system = detect_system()
+    total_ram = float(system.get("total_ram_gb") or 0)
+    available_ram = float(system.get("available_ram_gb") or 0)
+    unified = bool(system.get("unified_memory"))
+    gpu_vram = float(system.get("gpu_vram_gb") or 0)
+    if system.get("has_gpu") and gpu_vram and not unified:
+        pool_total = gpu_vram
+        pool_available = gpu_vram
+        pool_label = "GPU memory"
+    else:
+        pool_total = total_ram
+        pool_available = available_ram
+        pool_label = "unified memory" if unified else "system memory"
+
+    ctx = normalize_context_window(context_window)
+    if not ctx and model:
+        try:
+            ctx = get_context_length(build_chat_url(base_url), model)
+        except Exception:
+            ctx = None
+    ctx = ctx or DEFAULT_CONTEXT
+    loaded = {}
+    source = "model-name estimate"
+    ollama_root = _ollama_root_for(base_url)
+    if ollama_root and model:
+        loaded = _ollama_loaded_model(ollama_root, model)
+        if loaded:
+            source = "Ollama runtime"
+
+    details = loaded.get("details") if isinstance(loaded.get("details"), dict) else {}
+    params_b = _parse_params_b(str(details.get("parameter_size") or "")) or _parse_params_b(model)
+    quant = (details.get("quantization_level") or "").strip() or _infer_quant_label(model)
+    loaded_gb = None
+    if loaded.get("size"):
+        try:
+            loaded_gb = float(loaded["size"]) / (1024 ** 3)
+        except Exception:
+            loaded_gb = None
+    loaded_ctx = loaded.get("context_length")
+
+    weights_gb = kv_gb = estimated_total_gb = percent_total = None
+    if params_b:
+        bpp = QUANT_BPP.get(quant, QUANT_BPP.get("Q4_K_M", 0.58))
+        weights_gb = params_b * bpp + 0.5
+        kv_gb = 0.000008 * params_b * ctx
+        estimated_total_gb = weights_gb + kv_gb
+        if pool_total:
+            percent_total = min(999.0, (estimated_total_gb / pool_total) * 100)
+
+    status = "unknown"
+    if estimated_total_gb is not None and pool_total:
+        if estimated_total_gb <= pool_available * 0.75:
+            status = "comfortable"
+        elif estimated_total_gb <= pool_available:
+            status = "tight"
+        elif estimated_total_gb <= pool_total:
+            status = "may_swap"
+        else:
+            status = "too_large"
+
+    return {
+        "ok": True,
+        "model": model,
+        "context_window": ctx,
+        "source": source,
+        "params_b": round(params_b, 2) if params_b else None,
+        "quant": quant,
+        "weights_gb": round(weights_gb, 2) if weights_gb is not None else None,
+        "kv_cache_gb": round(kv_gb, 2) if kv_gb is not None else None,
+        "estimated_total_gb": round(estimated_total_gb, 2) if estimated_total_gb is not None else None,
+        "loaded_total_gb": round(loaded_gb, 2) if loaded_gb is not None else None,
+        "loaded_context_window": loaded_ctx,
+        "memory_pool_label": pool_label,
+        "total_memory_gb": round(pool_total, 1) if pool_total else None,
+        "available_memory_gb": round(pool_available, 1) if pool_available else None,
+        "percent_total": round(percent_total, 1) if percent_total is not None else None,
+        "status": status,
+        "local_memory_relevant": bool(ollama_root or _classify_endpoint(base_url) == "local"),
+    }
 
 
 # ── Curated model lists per provider ──
@@ -809,6 +968,7 @@ def setup_model_routes(model_discovery):
                     "online": len(all_models) > 0,
                     "model_type": getattr(r, "model_type", None) or "llm",
                     "supports_tools": getattr(r, "supports_tools", None),
+                    "context_window": getattr(r, "context_window", None),
                 })
             return results
         finally:
@@ -823,6 +983,7 @@ def setup_model_routes(model_discovery):
         skip_probe: str = Form("false"),
         require_models: str = Form("false"),
         model_type: str = Form("llm"),
+        context_window: str = Form(""),
         supports_tools: str = Form(""),  # "true"/"false"/"" (unknown)
         # Default `shared=true` → endpoints are visible to all users (the
         # app's historical behaviour). Admins can pass `shared=false` to
@@ -847,6 +1008,7 @@ def setup_model_routes(model_discovery):
 
         require_model_list = _truthy(require_models)
         should_probe = require_model_list or not _truthy(skip_probe)
+        ctx_override = _form_context_window(context_window)
 
         # Quick model list fetch (1s timeout — if endpoint is slow, it'll update on next refresh)
         model_ids = _probe_endpoint(base_url, api_key.strip() or None, timeout=1) if should_probe else []
@@ -872,6 +1034,7 @@ def setup_model_routes(model_discovery):
                 api_key=api_key.strip() or None,
                 is_enabled=True,
                 model_type=model_type.strip() if model_type else "llm",
+                context_window=ctx_override,
                 cached_models=json.dumps(model_ids) if model_ids else None,
                 supports_tools=_st,
                 owner=_owner_val,
@@ -974,6 +1137,34 @@ def setup_model_routes(model_discovery):
                 {"id": m, "display": m.split("/")[-1], "is_hidden": m in hidden}
                 for m in all_models
             ]
+        finally:
+            db.close()
+
+    @router.get("/model-endpoints/{ep_id}/memory-estimate")
+    def endpoint_memory_estimate(
+        ep_id: str,
+        request: Request,
+        model: str = Query(""),
+        context_window: str = Query(""),
+    ):
+        """Estimate model + context memory for the endpoint Settings UI."""
+        require_admin(request)
+        ctx_override = _form_context_window(context_window)
+        db = SessionLocal()
+        try:
+            ep = db.query(ModelEndpoint).filter(ModelEndpoint.id == ep_id).first()
+            if not ep:
+                raise HTTPException(404, "Endpoint not found")
+            selected_model = (model or "").strip()
+            if not selected_model and ep.cached_models:
+                try:
+                    models = json.loads(ep.cached_models)
+                    if models:
+                        selected_model = str(models[0])
+                except Exception:
+                    pass
+            ctx = ctx_override or getattr(ep, "context_window", None)
+            return _endpoint_memory_estimate(ep.base_url, selected_model, ctx)
         finally:
             db.close()
 
@@ -1132,6 +1323,8 @@ def setup_model_routes(model_discovery):
                     ep.name = body["name"].strip() or ep.name
                 if "model_type" in body and isinstance(body["model_type"], str):
                     ep.model_type = body["model_type"].strip() or ep.model_type
+                if "context_window" in body:
+                    ep.context_window = _form_context_window(body.get("context_window"))
             else:
                 ep.is_enabled = not ep.is_enabled
             db.commit()
@@ -1140,6 +1333,7 @@ def setup_model_routes(model_discovery):
                 "id": ep.id,
                 "is_enabled": ep.is_enabled,
                 "supports_tools": ep.supports_tools,
+                "context_window": ep.context_window,
                 "name": ep.name,
                 "model_type": ep.model_type,
             }

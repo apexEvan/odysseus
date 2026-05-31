@@ -13053,6 +13053,74 @@ body:has(.doc-version-panel:not(.hidden)) .hamburger-btn {
 .admin-user-row.admin-ep-disabled .admin-btn-sm,
 .admin-user-row.admin-ep-disabled .admin-btn-delete,
 .admin-user-row.admin-ep-disabled .admin-badge-off { opacity: 1; }
+.adm-ctx-control {
+  display: grid;
+  grid-template-columns: auto 82px;
+  grid-template-rows: auto auto auto;
+  column-gap: 6px;
+  row-gap: 3px;
+  align-items: center;
+  min-width: 208px;
+  color: color-mix(in srgb, var(--fg) 78%, transparent);
+  font-size: 10px;
+}
+.adm-ctx-head {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  grid-column: 1;
+  opacity: 0.78;
+}
+.adm-ctx-control input[type="range"] {
+  grid-column: 1;
+  width: 112px;
+  accent-color: var(--accent, var(--red));
+}
+.adm-ctx-control input[type="number"] {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  width: 82px;
+  padding: 4px 5px;
+  font-size: 11px;
+}
+.adm-ctx-memory {
+  grid-column: 1 / -1;
+  color: color-mix(in srgb, var(--fg) 48%, transparent);
+  white-space: nowrap;
+}
+.adm-ctx-memory[data-status="comfortable"] { color: var(--color-success); }
+.adm-ctx-memory[data-status="tight"] { color: var(--color-warning); }
+.adm-ctx-memory[data-status="may_swap"],
+.adm-ctx-memory[data-status="too_large"] { color: var(--color-error); }
+.adm-ctx-info-btn {
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--fg) 5%, transparent);
+  color: inherit;
+  font-size: 10px;
+  line-height: 1;
+  padding: 0;
+  cursor: pointer;
+}
+.adm-ctx-info-btn:hover {
+  border-color: var(--accent, var(--red));
+  color: var(--accent, var(--red));
+}
+.adm-ctx-popover {
+  position: fixed;
+  z-index: 10050;
+  max-width: 300px;
+  padding: 10px 11px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--fg);
+  box-shadow: 0 12px 32px rgba(0,0,0,0.24);
+  font-size: 12px;
+  line-height: 1.4;
+}
 /* Local / API subsection labels inside the Endpoints card */
 .adm-ep-section-head {
   display: flex;
@@ -19721,6 +19789,7 @@ body.gallery-selecting .gallery-dl-btn,
 }
 .hwfit-c-params { width: 42px; }
 .hwfit-c-quant  { width: 52px; }
+.hwfit-c-type   { width: 62px; }
 .hwfit-c-vram   { width: 42px; }
 .hwfit-c-ctx    { width: 32px; }
 .hwfit-c-speed  { width: 44px; }
@@ -19757,6 +19826,46 @@ body.gallery-selecting .gallery-dl-btn,
   font-size: 9px; padding: 2px 8px; border-radius: 10px;
   background: color-mix(in srgb, var(--red) 12%, transparent);
   color: var(--red); font-weight: 600; flex-shrink: 0;
+}
+.hwfit-panel-quality {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: -3px 0 0 0;
+  color: var(--fg-muted);
+  font-size: 10px;
+}
+.hwfit-panel-quality span {
+  padding: 2px 7px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--fg) 7%, transparent);
+  color: color-mix(in srgb, var(--fg) 76%, transparent);
+}
+.hwfit-panel-quality small {
+  flex-basis: 100%;
+  line-height: 1.35;
+  opacity: 0.78;
+}
+.hwfit-panel-compat {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: -3px;
+  color: var(--fg-muted);
+  font-size: 10px;
+}
+.hwfit-panel-compat span {
+  padding: 2px 7px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--red) 9%, transparent);
+  color: color-mix(in srgb, var(--red) 82%, var(--fg));
+}
+.hwfit-panel-compat small {
+  flex-basis: 100%;
+  line-height: 1.35;
+  opacity: 0.78;
 }
 .hwfit-panel-fields {
   display: flex; flex-wrap: wrap; gap: 6px; align-items: center;
@@ -19812,7 +19921,7 @@ body.gallery-selecting .gallery-dl-btn,
 .hwfit-preset-backend { font-size: 9px; padding: 1px 6px; border-radius: 8px; background: color-mix(in srgb, var(--fg) 8%, transparent); color: var(--fg-muted); }
 
 @media (max-width: 600px) {
-  .hwfit-c-ctx, .hwfit-c-speed, .hwfit-c-mode { display: none; }
+  .hwfit-c-type, .hwfit-c-ctx, .hwfit-c-speed, .hwfit-c-mode { display: none; }
   .hwfit-panel-fields { flex-direction: column; align-items: stretch; }
   .hwfit-panel-fields input[type="text"] { width: 100%; }
   .hwfit-preset-model { display: none; }

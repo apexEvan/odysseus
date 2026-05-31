@@ -228,6 +228,32 @@ Settings. OpenAI-compatible endpoints should be entered as the base URL ending
 at the provider's API prefix, for example `http://localhost:11434/v1`, not the
 full `/chat/completions` URL.
 
+The Cookbook ranks model suggestions by feasibility first, then quality, then
+fit comfort. Benchmark scores are read from the local model catalog when the
+model card exposes structured Hugging Face evaluation metadata; otherwise the
+quality badge is marked as heuristic.
+
+Cookbook rows also distinguish the model package/runtime type from the current
+run mode. For example, GGUF is shown as portable across llama.cpp/Ollama/LM
+Studio on macOS, Windows, and Linux; MLX is labeled for Apple Silicon; and
+AWQ/GPTQ/FP8 are labeled for GPU server runtimes such as vLLM or SGLang.
+
+### Context Windows
+Each model endpoint can optionally set a **Context** value in Settings. Leave it
+blank to auto-detect from the backend or known model metadata. Drag the slider
+or enter a token count when you want Odysseus to treat an endpoint as a smaller
+or larger prompt budget for chat trimming, compaction, and context-usage
+reporting. For local endpoints, Settings also shows an approximate model +
+context memory estimate against the machine's detected memory pool.
+
+This setting is intentionally backend-neutral: Odysseus does not send
+non-standard context fields to cloud APIs or OpenAI-compatible servers that may
+reject them. To reduce local model memory, configure the serving backend itself:
+Ollama uses a Modelfile `PARAMETER num_ctx`, vLLM uses `--max-model-len`,
+SGLang exposes server context-length arguments, and llama.cpp/llama-server uses
+`--ctx-size`/`-c`. Match the in-app Context value to the backend runtime value
+for the clearest memory and prompt-budget behavior.
+
 ## Security Notes
 Odysseus is a self-hosted workspace with powerful local tools: shell access, file uploads, model downloads, web research, email/calendar integrations, and API tokens. Treat it like an admin console.
 

@@ -1981,6 +1981,7 @@
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="vertical-align:-1px;margin-right:4px;"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>Scan for Servers
                   </button>
                   <span style="flex:1"></span>
+                  <input id="adm-epLocalCtx" type="number" min="512" max="4000000" step="1024" placeholder="Context auto" title="Odysseus prompt context budget in tokens; leave empty to auto-detect" style="width:118px;padding:5px;">
                   <select id="adm-epLocalType" style="padding:5px;width:80px;">
                     <option value="llm">LLM</option>
                     <option value="image">Image</option>
@@ -2027,6 +2028,7 @@
                 </div>
                 <div class="admin-model-form-row">
                   <input id="adm-epApiKey" type="password" placeholder="API key">
+                  <input id="adm-epCtx" type="number" min="512" max="4000000" step="1024" placeholder="Context auto" title="Odysseus prompt context budget in tokens; leave empty to auto-detect" style="width:118px;padding:5px;">
                   <select id="adm-epType" style="padding:5px;width:80px;">
                     <option value="llm">LLM</option>
                     <option value="image">Image</option>

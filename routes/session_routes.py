@@ -1050,8 +1050,9 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
         if not session.endpoint_url or not session.model:
             return {"context_length": None}
         try:
-            from src.model_context import get_context_length
-            ctx = get_context_length(session.endpoint_url, session.model)
+            from src.model_context import get_context_length, resolve_context_window_override
+            override = resolve_context_window_override(session.endpoint_url)
+            ctx = get_context_length(session.endpoint_url, session.model, override)
             return {"context_length": ctx, "model": session.model}
         except Exception:
             return {"context_length": None}

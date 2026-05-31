@@ -37,6 +37,65 @@ If a local model is loaded, memory should show up under that model backend,
 for example `ollama` or a vLLM/llama-server process. Chrome memory is normally
 UI tabs, extensions, rendering, cached media, or browser automation.
 
+## Context Window Control
+
+Odysseus stores an optional `context_window` on each configured model endpoint.
+When present, that value is the app's effective prompt budget for context
+compaction, trimming, and usage percentages. When absent, Odysseus probes the
+backend's `/models` metadata, llama.cpp `/slots` metadata where available, and
+known model-family fallbacks.
+
+This is deliberately separate from provider request payloads. Most
+OpenAI-compatible APIs do not define a request-side context-window parameter,
+and hosted providers generally fix context by model. Sending ad hoc fields can
+break otherwise valid providers, so Odysseus keeps the control local to prompt
+construction unless a backend-specific integration is explicitly added.
+
+For runtime memory reduction, configure the model server as well:
+
+| Backend | Runtime context knob |
+|---|---|
+| Ollama | Modelfile `PARAMETER num_ctx` |
+| vLLM | `vllm serve ... --max-model-len <tokens>` |
+| SGLang | server context-length launch argument |
+| llama.cpp llama-server | `--ctx-size <tokens>` or `-c <tokens>` |
+| Hosted APIs | fixed by the selected model/provider |
+
+The public UI label should stay plain: **Context** means "Odysseus prompt
+budget in tokens." It is not a promise that the backend has reloaded its KV
+cache at that size.
+
+The Settings endpoint row also displays a best-effort memory estimate. It uses
+the existing hardware detector for total/available memory, Ollama `/api/ps`
+metadata when available, and a conservative model-name heuristic otherwise.
+Treat this as a fit warning for humans, not scheduling logic.
+
+Cookbook model ranking is intentionally ordered as:
+
+1. hard feasibility on the selected hardware;
+2. benchmark-backed quality score where available;
+3. fit comfort, speed, and context as tie-breakers.
+
+Benchmark metadata is loaded from the local `services/hwfit/data/hf_models.json`
+catalog so the UI stays fast and does not call the network during normal scans.
+Refresh it before releases with:
+
+```bash
+.venv/bin/python scripts/enrich_hwfit_benchmarks.py
+```
+
+The enrichment script reads structured Hugging Face model-card `model-index`
+evaluation metadata and stores normalized benchmark entries in the catalog.
+Models without structured benchmark metadata still receive a clearly marked
+heuristic quality score.
+
+Cookbook model type labels are compatibility hints derived from catalog metadata,
+not host-specific probes. `model_type` describes the package/runtime family
+such as GGUF, MLX, AWQ, GPTQ, FP8, HF weights, or Diffusers. `runtime_hint`,
+`platform_hint`, and `compatibility` give the user-facing explanation. Keep this
+separate from `run_mode`, which describes where the current hardware scan would
+execute the model (`gpu`, `cpu_offload`, `cpu_only`, or `no_fit`).
+
 ## Browser MCP
 
 The Browser MCP is an optional Model Context Protocol server that gives the

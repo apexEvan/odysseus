@@ -12,6 +12,7 @@ from core.database import SessionLocal
 from core.database import Session as DBSession, ModelEndpoint
 from src.llm_core import normalize_model_id
 from src.context_compactor import maybe_compact, trim_for_context
+from src.model_context import resolve_context_window_override
 from src.auth_helpers import get_current_user
 from src.prompt_security import untrusted_context_message
 from routes.prefs_routes import _load_for_user as load_prefs_for_user
@@ -439,8 +440,14 @@ async def build_chat_context(
     messages = preface + sess.get_context_messages()
 
     # Auto-compact
+    context_window_override = resolve_context_window_override(sess.endpoint_url)
     messages, context_length, was_compacted = await maybe_compact(
-        sess, sess.endpoint_url, sess.model, messages, sess.headers,
+        sess,
+        sess.endpoint_url,
+        sess.model,
+        messages,
+        sess.headers,
+        context_window_override=context_window_override,
     )
     messages = trim_for_context(messages, context_length)
 
