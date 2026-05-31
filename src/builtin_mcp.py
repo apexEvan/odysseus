@@ -52,7 +52,9 @@ _BUILTIN_SERVERS = {
     "email":      ("mcp_servers/email_server.py",      "Built-in: Email"),
 }
 
-# NPX-based built-in servers (run via npx, not Python)
+# NPX-based built-in servers (run via npx, not Python). These are intentionally
+# opt-in because Playwright launches a headless browser process, which can use a
+# lot of memory on laptops before the user has asked for browser automation.
 _BUILTIN_NPX_SERVERS = {
     "builtin_browser": {
         "name": "Built-in: Browser",
@@ -63,6 +65,7 @@ _BUILTIN_NPX_SERVERS = {
 
 # Global flag to disable MCP if there are compatibility issues
 MCP_DISABLED = os.environ.get("ODYSSEUS_DISABLE_MCP", "").lower() in ("1", "true", "yes")
+BROWSER_MCP_ENABLED = os.environ.get("ODYSSEUS_ENABLE_BROWSER_MCP", "").lower() in ("1", "true", "yes")
 
 
 async def register_builtin_servers(mcp_manager):
@@ -101,7 +104,11 @@ async def register_builtin_servers(mcp_manager):
             continue
         asyncio.create_task(_connect_python_server(server_id, script_path, name))
 
-    # Register NPX-based servers in the background (they take longer to start)
+    # Register NPX-based servers in the background (they take longer to start).
+    if not BROWSER_MCP_ENABLED:
+        logger.info("Built-in Browser MCP disabled (set ODYSSEUS_ENABLE_BROWSER_MCP=true to enable)")
+        return
+
     npx_path = _find_npx()
     logger.info(f"NPX binary resolved to: {npx_path}")
 

@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$ROOT_DIR"
+
+if [ ! -x ".venv/bin/uvicorn" ]; then
+  cat >&2 <<'EOF'
+Odysseus is not bootstrapped yet.
+
+Run:
+  ./scripts/bootstrap --start
+EOF
+  exit 1
+fi
+
+if [ -z "${ODYSSEUS_PORT:-}" ]; then
+  ODYSSEUS_PORT="$(
+    .venv/bin/python - <<'PY'
+import platform
+from dotenv import dotenv_values
+
+values = dotenv_values(".env")
+default = "7001" if platform.system() == "Darwin" else "7000"
+print(values.get("ODYSSEUS_PORT") or default)
+PY
+  )"
+fi
+
+export ODYSSEUS_PORT
+if [ -z "${ODYSSEUS_INTERNAL_BASE_URL:-}" ]; then
+  ODYSSEUS_INTERNAL_BASE_URL="$(
+    .venv/bin/python - "$ODYSSEUS_PORT" <<'PY'
+import sys
+from dotenv import dotenv_values
+
+values = dotenv_values(".env")
+port = sys.argv[1]
+print(values.get("ODYSSEUS_INTERNAL_BASE_URL") or f"http://127.0.0.1:{port}")
+PY
+  )"
+fi
+export ODYSSEUS_INTERNAL_BASE_URL
+
+echo "Starting Odysseus:"
+echo "  ${ODYSSEUS_INTERNAL_BASE_URL}"
+echo
+echo "Tip: browser automation MCP is off by default to save memory."
+echo "     Enable it with ODYSSEUS_ENABLE_BROWSER_MCP=true ./scripts/start"
+echo
+
+exec .venv/bin/uvicorn app:app --host 127.0.0.1 --port "$ODYSSEUS_PORT"

@@ -19,6 +19,12 @@ first admin account in your browser. If you want Docker-managed ChromaDB,
 SearXNG, and ntfy, pass `--with-services`; otherwise those features may report
 degraded service until you point them at running services.
 
+After setup, start the app from Terminal with:
+
+```bash
+./scripts/start
+```
+
 ## What The Script Changes
 
 - Installs Homebrew `python@3.13` if missing.
@@ -57,12 +63,30 @@ source .venv/bin/activate
 uvicorn app:app --host 127.0.0.1 --port 7001
 ```
 
+The shorter equivalent after bootstrap is:
+
+```bash
+./scripts/start
+```
+
 Use `127.0.0.1` for local-only development. Bind to `0.0.0.0` only when you
 intend to expose Odysseus to your LAN or a reverse proxy.
 
 The native macOS path defaults to port `7001` because macOS Control
 Center/AirPlay commonly occupies port `7000`. Set `ODYSSEUS_PORT=7000` if you
 prefer the Docker/Linux default and that port is free.
+
+## Memory Notes
+
+Odysseus does not run LLM inference inside Chrome. The web app sends requests
+to the configured backend, such as Ollama, LM Studio, vLLM, llama.cpp, or a
+hosted provider. On macOS, high Chrome memory is usually open tabs/extensions or
+browser automation. The built-in Playwright Browser MCP is disabled by default;
+enable it only when you want the agent to control web pages:
+
+```bash
+ODYSSEUS_ENABLE_BROWSER_MCP=true ./scripts/start
+```
 
 ## Run At Login
 

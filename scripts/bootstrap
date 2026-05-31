@@ -373,9 +373,7 @@ else
     cat <<EOF
 
 Start it with:
-  source .venv/bin/activate
-  ODYSSEUS_PORT=${PORT} ODYSSEUS_INTERNAL_BASE_URL=http://127.0.0.1:${PORT} ODYSSEUS_SETUP_TOKEN=${SETUP_TOKEN} \\
-    uvicorn app:app --host 127.0.0.1 --port ${PORT}
+  ODYSSEUS_SETUP_TOKEN=${SETUP_TOKEN} ./scripts/start
 
 Then open:
   ${SETUP_URL}
@@ -384,9 +382,7 @@ EOF
     cat <<EOF
 
 Start it with:
-  source .venv/bin/activate
-  ODYSSEUS_PORT=${PORT} ODYSSEUS_INTERNAL_BASE_URL=http://127.0.0.1:${PORT} \\
-    uvicorn app:app --host 127.0.0.1 --port ${PORT}
+  ./scripts/start
 EOF
   fi
 fi

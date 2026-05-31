@@ -19,6 +19,12 @@ The bootstrap creates a project-local Python environment, installs dependencies
 there, chooses an available local port, detects common local LLM backends, and
 prints the URL to open in your browser.
 
+After setup, start Odysseus from the terminal with:
+
+```bash
+./scripts/start
+```
+
 ## Features
 - **Chat** -- chat with local or hosted models.
   <br><sub>vLLM · llama.cpp · Ollama · LM Studio · OpenRouter · OpenAI · Anthropic · Gemini</sub>
@@ -79,6 +85,11 @@ Bootstrap checks your platform, asks before installing system packages, creates
 `.venv`, installs dependencies there, chooses a free local port, and prints a
 short-lived first-run setup URL. Use that URL to create the first admin account
 in the browser. No temporary admin password is stored or printed by this path.
+
+After the first setup, start it again any time with:
+```bash
+./scripts/start
+```
 
 To also start the bundled Docker sidecars:
 ```bash
@@ -182,6 +193,12 @@ Odysseus talks to model servers through provider-native or OpenAI-compatible
 HTTP APIs. The compatibility list below was checked against upstream
 documentation on May 31, 2026.
 
+Model inference does not run inside Chrome. The browser renders the UI and
+streams responses; Odysseus sends API requests from the app server to whichever
+backend you configure, such as Ollama, LM Studio, vLLM, llama.cpp, OpenRouter,
+OpenAI, Anthropic, or Gemini. If the browser is using several GB of memory,
+check open tabs/extensions and whether browser automation MCP is enabled.
+
 | Backend | How to connect | Notes |
 |---|---|---|
 | [OpenAI](https://platform.openai.com/docs/api-reference/chat/create-chat-completion) | `https://api.openai.com/v1` + API key | Chat Completions-compatible. Configure in Settings or pre-seed `OPENAI_API_KEY`. |
@@ -254,6 +271,7 @@ Key settings:
 | `ODYSSEUS_INTERNAL_BASE_URL` | `http://127.0.0.1:$ODYSSEUS_PORT` | Loopback URL for in-app tools that call Odysseus routes. |
 | `ODYSSEUS_SETUP_TOKEN` | -- | Optional fixed first-run setup token for automated deployments. Bootstrap normally generates one. |
 | `ODYSSEUS_ALLOW_REMOTE_FIRST_RUN_SETUP` | `false` | Allows first-run setup from non-local clients. Keep false unless behind trusted private access. |
+| `ODYSSEUS_ENABLE_BROWSER_MCP` | `false` | Starts the built-in Playwright Browser MCP sidecar. Leave off unless you need agent-controlled browser automation. |
 | `DATABASE_URL` | `sqlite:///./data/app.db` | Database connection string |
 | `CHROMADB_HOST` | `localhost` | ChromaDB host for vector memory. Docker overrides this to `chromadb`. |
 | `CHROMADB_PORT` | `8100` | ChromaDB port for manual host runs. Docker overrides this to `8000`. |
