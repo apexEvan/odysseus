@@ -702,7 +702,7 @@ export const _hwfitColumns = [
   { key: 'vram',  label: 'VRAM',   cls: 'hwfit-c-vram' },
   { key: 'context',label: 'Ctx',   cls: 'hwfit-c-ctx' },
   { key: 'speed', label: 'Speed',  cls: 'hwfit-c-speed' },
-  { key: 'score', label: 'Score',  cls: 'hwfit-c-score' },
+  { key: 'score', label: 'Qual',   cls: 'hwfit-c-score' },
   { key: null,    label: 'Mode',   cls: 'hwfit-c-mode' },
 ];
 
@@ -743,7 +743,8 @@ export function _hwfitRenderList(el, models) {
   html += '</div>';
   for (const m of models) {
     const fitColor = _fitColors[m.fit_level] || 'var(--fg-muted)';
-    const score = m.score?.toFixed?.(1) ?? m.score ?? '0';
+    const qualityScore = m.scores?.quality ?? m.score ?? 0;
+    const score = qualityScore?.toFixed?.(1) ?? qualityScore ?? '0';
     let tpsRaw = m.speed_tps ?? 0;
     if (tpsRaw > 9999) tpsRaw = 9999;
     const tps = tpsRaw > 0 ? (tpsRaw >= 100 ? Math.round(tpsRaw) : tpsRaw.toFixed(1)) : '?';
@@ -763,7 +764,10 @@ export function _hwfitRenderList(el, models) {
     html += `<span class="hwfit-col hwfit-c-vram">${vramLabel}</span>`;
     html += `<span class="hwfit-col hwfit-c-ctx">${m.is_image_gen ? '\u2014' : ctx}</span>`;
     html += `<span class="hwfit-col hwfit-c-speed">${m.is_image_gen ? '\u2014' : tps + ' t/s'}</span>`;
-    html += `<span class="hwfit-col hwfit-c-score">${score}</span>`;
+    const qualityTitle = m.quality_source === 'benchmark'
+      ? 'Benchmark-backed quality score'
+      : 'Heuristic quality score; benchmark metadata not available';
+    html += `<span class="hwfit-col hwfit-c-score" title="${esc(qualityTitle)}">${score}</span>`;
     html += `<span class="hwfit-col hwfit-c-mode">${m.is_image_gen ? 'image' : esc(modeLabel)}</span>`;
     html += `</div>`;
   }
@@ -855,6 +859,16 @@ export function _expandModelRow(row, modelData) {
   html += `<span class="hwfit-panel-badge">${esc(label)}</span>`;
   html += `<a href="${esc(hfUrl)}" target="_blank" rel="noopener" class="hwfit-panel-hf-link" title="View on HuggingFace">HF \u2197</a>`;
   html += `</div>`;
+  const quality = modelData.scores?.quality;
+  const qSource = modelData.quality_source === 'benchmark' ? 'benchmarks' : modelData.quality_source || 'heuristic';
+  if (quality != null) {
+    const details = (modelData.benchmark_details || []).map(b => {
+      const name = b.raw_name || b.name || 'benchmark';
+      const score = Number(b.score);
+      return `${esc(String(name))}: ${Number.isFinite(score) ? score.toFixed(1) : esc(String(b.score))}`;
+    }).join(' · ');
+    html += `<div class="hwfit-panel-quality"><span>Quality ${Number(quality).toFixed(1)}</span><span>${esc(qSource)}</span>${details ? `<small>${details}</small>` : ''}</div>`;
+  }
   html += `<div class="hwfit-panel-actions">`;
   html += `<button class="cookbook-btn hwfit-dl-btn">Download</button>`;
   if (!modelData.is_image_gen) {

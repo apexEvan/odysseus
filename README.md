@@ -228,6 +228,11 @@ Settings. OpenAI-compatible endpoints should be entered as the base URL ending
 at the provider's API prefix, for example `http://localhost:11434/v1`, not the
 full `/chat/completions` URL.
 
+The Cookbook ranks model suggestions by feasibility first, then quality, then
+fit comfort. Benchmark scores are read from the local model catalog when the
+model card exposes structured Hugging Face evaluation metadata; otherwise the
+quality badge is marked as heuristic.
+
 ### Context Windows
 Each model endpoint can optionally set a **Context** value in Settings. Leave it
 blank to auto-detect from the backend or known model metadata. Drag the slider

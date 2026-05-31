@@ -19826,6 +19826,26 @@ body.gallery-selecting .gallery-dl-btn,
   background: color-mix(in srgb, var(--red) 12%, transparent);
   color: var(--red); font-weight: 600; flex-shrink: 0;
 }
+.hwfit-panel-quality {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: -3px 0 0 0;
+  color: var(--fg-muted);
+  font-size: 10px;
+}
+.hwfit-panel-quality span {
+  padding: 2px 7px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--fg) 7%, transparent);
+  color: color-mix(in srgb, var(--fg) 76%, transparent);
+}
+.hwfit-panel-quality small {
+  flex-basis: 100%;
+  line-height: 1.35;
+  opacity: 0.78;
+}
 .hwfit-panel-fields {
   display: flex; flex-wrap: wrap; gap: 6px; align-items: center;
 }

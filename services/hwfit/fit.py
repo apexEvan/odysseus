@@ -1,4 +1,6 @@
+import math
 import re
+from datetime import datetime, timezone
 
 from services.hwfit.models import (
     params_b, estimate_memory_gb, infer_use_case,
@@ -56,6 +58,44 @@ CONTEXT_TARGET = {
     "tts": 2048, "stt": 2048,
 }
 
+BENCHMARK_WEIGHTS = {
+    "general": {
+        "mmlu": 0.28, "mmlu_pro": 0.30, "arc": 0.18, "hellaswag": 0.14,
+        "truthfulqa": 0.12, "ifeval": 0.12, "winogrande": 0.08,
+    },
+    "chat": {
+        "mt_bench": 0.26, "arena": 0.26, "alpacaeval": 0.18, "ifeval": 0.16,
+        "mmlu": 0.10, "truthfulqa": 0.10,
+    },
+    "coding": {
+        "humaneval": 0.30, "mbpp": 0.22, "livecodebench": 0.24,
+        "bigcodebench": 0.22, "swe_bench": 0.18, "mmlu": 0.06,
+    },
+    "reasoning": {
+        "gpqa": 0.24, "aime": 0.24, "math": 0.18, "gsm8k": 0.14,
+        "mmlu_pro": 0.14, "bbh": 0.12, "arc": 0.06,
+    },
+    "multimodal": {
+        "mmmu": 0.30, "mathvista": 0.20, "mmbench": 0.18, "ai2d": 0.12,
+        "docvqa": 0.12, "ocrbench": 0.08,
+    },
+}
+
+BENCHMARK_ALIASES = {
+    "ai2 reasoning challenge": "arc",
+    "arc_c": "arc",
+    "arc_challenge": "arc",
+    "big bench hard": "bbh",
+    "big_bench_hard": "bbh",
+    "chatbot arena": "arena",
+    "human eval": "humaneval",
+    "human_eval": "humaneval",
+    "math level 5": "math",
+    "truthful qa": "truthfulqa",
+}
+
+FIT_PRIORITY = {"perfect": 3, "good": 2, "marginal": 1, "too_tight": 0}
+
 
 def _lookup_bandwidth(gpu_name):
     if not gpu_name:
@@ -96,7 +136,123 @@ def _estimate_speed(model, quant, run_mode, system):
     return k / pb * sm
 
 
+def _norm_benchmark_name(name):
+    value = re.sub(r"[^a-z0-9]+", "_", (name or "").lower()).strip("_")
+    if value in BENCHMARK_ALIASES:
+        return BENCHMARK_ALIASES[value]
+    loose = value.replace("_", " ")
+    for alias, canonical in BENCHMARK_ALIASES.items():
+        if alias in loose:
+            return canonical
+    for canonical in {k for weights in BENCHMARK_WEIGHTS.values() for k in weights}:
+        if canonical in value:
+            return canonical
+    return value
+
+
+def _normalize_benchmark_value(value, name=""):
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        return None
+    name_l = (name or "").lower()
+    if "arena" in name_l and numeric > 100:
+        return max(0.0, min(100.0, (numeric - 900.0) / 5.0))
+    if numeric <= 1:
+        numeric *= 100
+    return max(0.0, min(100.0, numeric))
+
+
+def _iter_benchmark_entries(model):
+    raw = []
+    for key in ("benchmarks", "benchmark_scores", "eval_results", "evalResults"):
+        val = model.get(key)
+        if isinstance(val, list):
+            raw.extend(val)
+        elif isinstance(val, dict):
+            raw.extend({"name": k, "value": v} for k, v in val.items())
+
+    model_index = model.get("model-index") or model.get("model_index") or model.get("modelIndex")
+    if isinstance(model_index, list):
+        for entry in model_index:
+            if not isinstance(entry, dict):
+                continue
+            for result in entry.get("results", []) or []:
+                if not isinstance(result, dict):
+                    continue
+                dataset = result.get("dataset") or {}
+                for metric in result.get("metrics", []) or []:
+                    if isinstance(metric, dict):
+                        raw.append({
+                            "name": metric.get("type") or metric.get("name") or dataset.get("type") or dataset.get("name"),
+                            "value": metric.get("value"),
+                            "source": (result.get("source") or {}).get("name"),
+                        })
+
+    for entry in raw:
+        if not isinstance(entry, dict):
+            continue
+        name = entry.get("name") or entry.get("benchmark") or entry.get("dataset") or entry.get("metric")
+        score = _normalize_benchmark_value(entry.get("value", entry.get("score")), str(name or ""))
+        if score is not None:
+            yield {
+                "name": _norm_benchmark_name(str(name or "")),
+                "raw_name": name,
+                "score": score,
+                "source": entry.get("source"),
+            }
+
+
+def _benchmark_quality_score(model, use_case):
+    entries = list(_iter_benchmark_entries(model))
+    if not entries:
+        return None, []
+    weights = BENCHMARK_WEIGHTS.get(use_case) or BENCHMARK_WEIGHTS["general"]
+    weighted = 0.0
+    total_weight = 0.0
+    used = []
+    for item in entries:
+        weight = weights.get(item["name"])
+        if not weight:
+            continue
+        weighted += item["score"] * weight
+        total_weight += weight
+        used.append(item)
+    if total_weight:
+        return weighted / total_weight, used[:4]
+    avg = sum(item["score"] for item in entries) / len(entries)
+    return avg, entries[:4]
+
+
+def _popularity_score(model):
+    downloads = max(0, float(model.get("hf_downloads") or 0))
+    likes = max(0, float(model.get("hf_likes") or 0))
+    return min(100.0, math.log10(downloads + 1) * 12 + math.log10(likes + 1) * 10)
+
+
+def _freshness_score(model):
+    raw = model.get("release_date") or model.get("last_modified") or ""
+    try:
+        dt = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+    except Exception:
+        return 50.0
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    age_days = max(0, (datetime.now(timezone.utc) - dt).days)
+    if age_days <= 90:
+        return 100.0
+    if age_days >= 900:
+        return 35.0
+    return 100.0 - ((age_days - 90) / 810.0) * 65.0
+
+
 def _quality_score(model, quant, use_case):
+    bench, details = _benchmark_quality_score(model, use_case)
+    if bench is not None:
+        blended = bench * 0.84 + _popularity_score(model) * 0.10 + _freshness_score(model) * 0.06
+        blended += QUANT_QUALITY_PENALTY.get(quant, 0)
+        return max(0, min(100, blended)), "benchmark", details
+
     pb = params_b(model)
     if pb < 1:
         base = 30
@@ -135,7 +291,7 @@ def _quality_score(model, quant, use_case):
     if model_uc == "multimodal" and use_case == "multimodal":
         base += 6
 
-    return max(0, min(100, base))
+    return max(0, min(100, base)), "heuristic", []
 
 
 def _speed_score(tps, use_case):
@@ -272,6 +428,7 @@ def analyze_model(model, system, target_quant=None):
         # Default: Q4_K_M (user's stated preference)
         quant_to_try = "Q4_K_M"
 
+    q_score, quality_source, benchmark_details = _quality_score(model, quant_to_try, use_case)
     result = _try_quant_at(model, quant_to_try, ctx, effective_vram, eff_ram)
 
     # If target quant doesn't fit and it's not pre-quantized, try lower quants
@@ -305,7 +462,10 @@ def analyze_model(model, system, target_quant=None):
             "required_gb": round(oversized_required, 1),
             "speed_tps": 0,
             "score": 0,
-            "scores": {"quality": 0, "speed": 0, "fit": 0, "context": 0},
+            "scores": {"quality": round(q_score, 1), "speed": 0, "fit": 0, "context": 0},
+            "quality_source": quality_source,
+            "benchmark_details": benchmark_details,
+            "fit_possible": False,
             "gguf_sources": model.get("gguf_sources", []),
             "context_length": model.get("context_length", 4096),
         }
@@ -331,7 +491,7 @@ def analyze_model(model, system, target_quant=None):
 
     tps = _estimate_speed(model, quant, run_mode, system)
 
-    q_score = _quality_score(model, quant, use_case)
+    q_score, quality_source, benchmark_details = _quality_score(model, quant, use_case)
     s_score = _speed_score(tps, use_case)
     f_score = _fit_score(required_gb, budget)
     c_score = _context_score(fit_ctx, use_case)
@@ -359,6 +519,9 @@ def analyze_model(model, system, target_quant=None):
             "fit": round(f_score, 1),
             "context": round(c_score, 1),
         },
+        "quality_source": quality_source,
+        "benchmark_details": benchmark_details,
+        "fit_possible": True,
         "gguf_sources": model.get("gguf_sources", []),
         "context_length": model.get("context_length", 4096),
     }
@@ -371,6 +534,17 @@ SORT_KEYS = {
     "params": lambda r: r["params_b"],
     "context": lambda r: r["context"],
 }
+
+
+def _recommendation_key(result):
+    """Primary Cookbook order: runnable first, quality second, fit comfort third."""
+    fit_possible = result.get("fit_possible", result.get("fit_level") != "too_tight")
+    hard_fit = 1 if fit_possible else 0
+    quality = (result.get("scores") or {}).get("quality", result.get("score", 0)) or 0
+    fit = (result.get("scores") or {}).get("fit", 0) or 0
+    fit_rank = FIT_PRIORITY.get(result.get("fit_level"), 0)
+    speed = result.get("speed_tps", 0) or 0
+    return (hard_fit, quality, fit_rank, fit, speed)
 
 
 def rank_models(system, use_case=None, limit=50, search=None, sort="score", quant=None):
@@ -406,6 +580,9 @@ def rank_models(system, use_case=None, limit=50, search=None, sort="score", quan
                 "speed_tps": 0,
                 "score": float(im["score"]),
                 "scores": {"quality": float(im["quality"]), "speed": float(im["speed"]), "fit": 0, "context": 0},
+                "quality_source": "curated",
+                "benchmark_details": [],
+                "fit_possible": bool(im["fits"]),
                 "gguf_sources": [],
                 "is_image_gen": True,
                 "capabilities": im.get("capabilities", []),
@@ -458,14 +635,15 @@ def rank_models(system, use_case=None, limit=50, search=None, sort="score", quan
 
         results.append(result)
 
-    # Pick the visible SET by best fit (score) first, so it stays the same no
-    # matter which column the user sorts by — otherwise sorting by params would
-    # truncate to the N biggest models (huge ones that don't even fit) while
-    # sorting by vram showed the N smallest. Only AFTER choosing the set do we
-    # order it by the requested column.
-    results.sort(key=SORT_KEYS["score"], reverse=True)
+    # Pick the visible set by recommendation order first: hard feasibility,
+    # benchmark/catalog quality, then fit comfort. A high-quality no-fit model
+    # is useful context, but it should never outrank a model the user can run.
+    results.sort(key=_recommendation_key, reverse=True)
     results = results[:limit]
-    sort_fn = SORT_KEYS.get(sort, SORT_KEYS["score"])
-    # vram ascending (smallest first), everything else descending (biggest first)
-    results.sort(key=sort_fn, reverse=(sort != "vram"))
+    if sort == "score":
+        results.sort(key=_recommendation_key, reverse=True)
+    else:
+        sort_fn = SORT_KEYS.get(sort, SORT_KEYS["score"])
+        # vram ascending (smallest first), everything else descending (biggest first)
+        results.sort(key=sort_fn, reverse=(sort != "vram"))
     return results

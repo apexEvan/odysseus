@@ -70,6 +70,25 @@ the existing hardware detector for total/available memory, Ollama `/api/ps`
 metadata when available, and a conservative model-name heuristic otherwise.
 Treat this as a fit warning for humans, not scheduling logic.
 
+Cookbook model ranking is intentionally ordered as:
+
+1. hard feasibility on the selected hardware;
+2. benchmark-backed quality score where available;
+3. fit comfort, speed, and context as tie-breakers.
+
+Benchmark metadata is loaded from the local `services/hwfit/data/hf_models.json`
+catalog so the UI stays fast and does not call the network during normal scans.
+Refresh it before releases with:
+
+```bash
+.venv/bin/python scripts/enrich_hwfit_benchmarks.py
+```
+
+The enrichment script reads structured Hugging Face model-card `model-index`
+evaluation metadata and stores normalized benchmark entries in the catalog.
+Models without structured benchmark metadata still receive a clearly marked
+heuristic quality score.
+
 ## Browser MCP
 
 The Browser MCP is an optional Model Context Protocol server that gives the
