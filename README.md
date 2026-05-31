@@ -228,6 +228,20 @@ Settings. OpenAI-compatible endpoints should be entered as the base URL ending
 at the provider's API prefix, for example `http://localhost:11434/v1`, not the
 full `/chat/completions` URL.
 
+### Context Windows
+Each model endpoint can optionally set a **Context** value in Settings. Leave it
+blank to auto-detect from the backend or known model metadata. Set it when you
+want Odysseus to treat an endpoint as a smaller or larger prompt budget for
+chat trimming, compaction, and context-usage reporting.
+
+This setting is intentionally backend-neutral: Odysseus does not send
+non-standard context fields to cloud APIs or OpenAI-compatible servers that may
+reject them. To reduce local model memory, configure the serving backend itself:
+Ollama uses a Modelfile `PARAMETER num_ctx`, vLLM uses `--max-model-len`,
+SGLang exposes server context-length arguments, and llama.cpp/llama-server uses
+`--ctx-size`/`-c`. Match the in-app Context value to the backend runtime value
+for the clearest memory and prompt-budget behavior.
+
 ## Security Notes
 Odysseus is a self-hosted workspace with powerful local tools: shell access, file uploads, model downloads, web research, email/calendar integrations, and API tokens. Treat it like an admin console.
 

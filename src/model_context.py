@@ -157,27 +157,79 @@ KNOWN_CONTEXT_WINDOWS = {
 }
 
 # ---------------------------------------------------------------------------
-# Cache
+# Context-window validation and cache
 # ---------------------------------------------------------------------------
+MIN_CONTEXT_WINDOW = 512
+MAX_CONTEXT_WINDOW = 4_000_000
 _context_cache: Dict[str, int] = {}
 
 
-def get_context_length(endpoint_url: str, model: str) -> int:
+def normalize_context_window(value) -> Optional[int]:
+    """Return a validated context window override, or None for auto-detect."""
+    if value is None or value == "":
+        return None
+    try:
+        ctx = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Context window must be a whole number") from exc
+    if ctx <= 0:
+        return None
+    if ctx < MIN_CONTEXT_WINDOW or ctx > MAX_CONTEXT_WINDOW:
+        raise ValueError(
+            f"Context window must be between {MIN_CONTEXT_WINDOW} and {MAX_CONTEXT_WINDOW} tokens"
+        )
+    return ctx
+
+
+def get_context_length(endpoint_url: str, model: str, context_window_override=None) -> int:
     """Get the context window size for a model.
 
     Queries /v1/models on the endpoint and looks for context_length
     or context_window fields. Caches result per model ID.
     Falls back to DEFAULT_CONTEXT if unavailable.
     """
-    if model in _context_cache:
-        return _context_cache[model]
+    override = normalize_context_window(context_window_override)
+    if override:
+        return override
+
+    cache_key = f"{(endpoint_url or '').strip().rstrip('/')}::{model or ''}"
+    if cache_key in _context_cache:
+        return _context_cache[cache_key]
 
     ctx = _query_context_length(endpoint_url, model)
     # Only cache non-default values to allow retry on next request
     if ctx != DEFAULT_CONTEXT:
-        _context_cache[model] = ctx
+        _context_cache[cache_key] = ctx
     logger.info(f"Context length for {model}: {ctx}")
     return ctx
+
+
+def resolve_context_window_override(endpoint_url: str) -> Optional[int]:
+    """Look up an endpoint's configured Odysseus context budget, if any."""
+    if not endpoint_url:
+        return None
+    try:
+        from src.database import SessionLocal, ModelEndpoint
+        from src.endpoint_resolver import normalize_base
+
+        base = normalize_base(endpoint_url)
+        db = SessionLocal()
+        try:
+            ep = db.query(ModelEndpoint).filter(ModelEndpoint.base_url == base).first()
+            if not ep and base.endswith("/v1"):
+                ep = db.query(ModelEndpoint).filter(ModelEndpoint.base_url == base[:-3].rstrip("/")).first()
+            if not ep:
+                host = urlparse(base).netloc
+                if host:
+                    ep = db.query(ModelEndpoint).filter(ModelEndpoint.base_url.contains(host)).first()
+            if not ep:
+                return None
+            return normalize_context_window(getattr(ep, "context_window", None))
+        finally:
+            db.close()
+    except Exception as exc:
+        logger.debug("Context window override lookup failed for %s: %s", endpoint_url, exc)
+        return None
 
 
 def _lookup_known(model: str) -> Optional[int]:

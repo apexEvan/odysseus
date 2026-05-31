@@ -178,12 +178,13 @@ async def maybe_compact(
     model: str,
     messages: List[Dict],
     headers: Optional[Dict] = None,
+    context_window_override: Optional[int] = None,
 ) -> tuple:
     """Check context usage and compact if above threshold.
 
     Returns (messages, context_length, was_compacted).
     """
-    context_length = get_context_length(endpoint_url, model)
+    context_length = get_context_length(endpoint_url, model, context_window_override)
     used = estimate_tokens(messages)
     pct = (used / context_length) * 100 if context_length else 0
 

@@ -24,6 +24,7 @@ from routes.model_routes import (
     _curate_models,
     _is_chat_model,
     _classify_endpoint,
+    _form_context_window,
     _probe_endpoint,
     _truthy,
     _PROVIDER_CURATED,
@@ -200,6 +201,14 @@ class TestSetupProbeSafety:
     @pytest.mark.parametrize("value", ["false", "0", "no", "", None])
     def test_truthy_false_values(self, value):
         assert _truthy(value) is False
+
+    def test_form_context_window_blank_is_auto(self):
+        assert _form_context_window("") is None
+
+    def test_form_context_window_validates_bounds(self):
+        assert _form_context_window("16384") == 16384
+        with pytest.raises(Exception):
+            _form_context_window("128")
 
     def test_keyed_probe_does_not_fallback_to_curated_on_auth_failure(self, monkeypatch):
         monkeypatch.setattr(endpoint_resolver, "resolve_url", lambda url: url, raising=False)

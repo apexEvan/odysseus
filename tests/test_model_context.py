@@ -2,7 +2,14 @@
 
 import pytest
 
-from src.model_context import _is_local_endpoint, estimate_tokens, _lookup_known
+from src.model_context import (
+    _context_cache,
+    _is_local_endpoint,
+    _lookup_known,
+    estimate_tokens,
+    get_context_length,
+    normalize_context_window,
+)
 
 
 class TestIsLocalEndpoint:
@@ -107,3 +114,45 @@ class TestLookupKnown:
         """Models with :free or :extended suffixes should still match."""
         result = _lookup_known("deepseek-r1:free")
         assert result == 64000
+
+
+class TestContextWindowOverride:
+    def test_blank_override_uses_auto(self):
+        assert normalize_context_window("") is None
+        assert normalize_context_window(None) is None
+        assert normalize_context_window(0) is None
+
+    def test_valid_override(self):
+        assert normalize_context_window("16384") == 16384
+        assert normalize_context_window(32768) == 32768
+
+    @pytest.mark.parametrize("value", ["abc", 128, 5_000_000])
+    def test_invalid_override(self, value):
+        with pytest.raises(ValueError):
+            normalize_context_window(value)
+
+    def test_get_context_length_returns_override_without_probe(self, monkeypatch):
+        called = False
+
+        def fake_query(endpoint_url, model):
+            nonlocal called
+            called = True
+            return 131072
+
+        monkeypatch.setattr("src.model_context._query_context_length", fake_query)
+        assert get_context_length("http://localhost:11434/v1", "qwen", 8192) == 8192
+        assert called is False
+
+    def test_context_cache_is_endpoint_scoped(self, monkeypatch):
+        _context_cache.clear()
+        values = {
+            "http://one/v1/chat/completions": 8192,
+            "http://two/v1/chat/completions": 32768,
+        }
+
+        def fake_query(endpoint_url, model):
+            return values[endpoint_url]
+
+        monkeypatch.setattr("src.model_context._query_context_length", fake_query)
+        assert get_context_length("http://one/v1/chat/completions", "same-model") == 8192
+        assert get_context_length("http://two/v1/chat/completions", "same-model") == 32768

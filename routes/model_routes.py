@@ -17,6 +17,7 @@ from src.llm_core import _detect_provider, ANTHROPIC_MODELS
 from src.settings import load_settings as _load_settings, save_settings as _save_settings
 from src.endpoint_resolver import normalize_base as _normalize_base, build_chat_url, build_headers
 from src.auth_helpers import owner_filter
+from src.model_context import normalize_context_window
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +29,13 @@ def _anthropic_api_root(base: str) -> str:
     if host.endswith("anthropic.com") and base.endswith("/v1"):
         return base[:-3].rstrip("/")
     return base
+
+
+def _form_context_window(value: Any) -> Optional[int]:
+    try:
+        return normalize_context_window(value)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
 
 
 # ── Curated model lists per provider ──
@@ -809,6 +817,7 @@ def setup_model_routes(model_discovery):
                     "online": len(all_models) > 0,
                     "model_type": getattr(r, "model_type", None) or "llm",
                     "supports_tools": getattr(r, "supports_tools", None),
+                    "context_window": getattr(r, "context_window", None),
                 })
             return results
         finally:
@@ -823,6 +832,7 @@ def setup_model_routes(model_discovery):
         skip_probe: str = Form("false"),
         require_models: str = Form("false"),
         model_type: str = Form("llm"),
+        context_window: str = Form(""),
         supports_tools: str = Form(""),  # "true"/"false"/"" (unknown)
         # Default `shared=true` → endpoints are visible to all users (the
         # app's historical behaviour). Admins can pass `shared=false` to
@@ -847,6 +857,7 @@ def setup_model_routes(model_discovery):
 
         require_model_list = _truthy(require_models)
         should_probe = require_model_list or not _truthy(skip_probe)
+        ctx_override = _form_context_window(context_window)
 
         # Quick model list fetch (1s timeout — if endpoint is slow, it'll update on next refresh)
         model_ids = _probe_endpoint(base_url, api_key.strip() or None, timeout=1) if should_probe else []
@@ -872,6 +883,7 @@ def setup_model_routes(model_discovery):
                 api_key=api_key.strip() or None,
                 is_enabled=True,
                 model_type=model_type.strip() if model_type else "llm",
+                context_window=ctx_override,
                 cached_models=json.dumps(model_ids) if model_ids else None,
                 supports_tools=_st,
                 owner=_owner_val,
@@ -1132,6 +1144,8 @@ def setup_model_routes(model_discovery):
                     ep.name = body["name"].strip() or ep.name
                 if "model_type" in body and isinstance(body["model_type"], str):
                     ep.model_type = body["model_type"].strip() or ep.model_type
+                if "context_window" in body:
+                    ep.context_window = _form_context_window(body.get("context_window"))
             else:
                 ep.is_enabled = not ep.is_enabled
             db.commit()
@@ -1140,6 +1154,7 @@ def setup_model_routes(model_discovery):
                 "id": ep.id,
                 "is_enabled": ep.is_enabled,
                 "supports_tools": ep.supports_tools,
+                "context_window": ep.context_window,
                 "name": ep.name,
                 "model_type": ep.model_type,
             }

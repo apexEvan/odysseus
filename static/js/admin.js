@@ -315,6 +315,7 @@ async function loadEndpoints() {
     const rowHtml = data.map(ep => {
       const visibleCount = ep.models.length;
       const totalCount = visibleCount + (ep.hidden_count || 0);
+      const ctxVal = ep.context_window ? String(ep.context_window) : '';
       // `ep.models` is the *visible* set — when every model is hidden it's
       // empty, but we still need to render the expand panel so the user can
       // un-hide them. Gate on the total instead.
@@ -329,11 +330,16 @@ async function loadEndpoints() {
             <div class="admin-user-info" style="flex:1;flex-wrap:wrap;gap:0.3rem;">
               <span class="admin-user-name">${esc(ep.name)}</span>
               ${ep.model_type === 'image' ? '<span class="admin-badge" style="background:color-mix(in srgb, var(--accent) 20%, transparent);color:var(--accent);">Image</span>' : ''}
+              ${ep.context_window ? `<span class="admin-badge">${esc(String(ep.context_window))} ctx</span>` : ''}
               ${statusBadge}
               ${ep.is_enabled ? '' : '<span class="admin-badge admin-badge-off">disabled</span>'}
               ${hasModels ? '<span style="font-size:10px;opacity:0.4;">Click to manage models</span>' : ''}
             </div>
             <div style="display:flex;gap:4px;align-items:center;">
+              <label title="Odysseus prompt context budget in tokens. Leave empty to auto-detect." style="display:flex;align-items:center;gap:4px;font-size:10px;opacity:0.72;">
+                <span>Ctx</span>
+                <input type="number" min="512" max="4000000" step="1024" placeholder="Auto" value="${esc(ctxVal)}" data-adm-ctx-window="${ep.id}" style="width:82px;padding:4px 5px;font-size:11px;">
+              </label>
               <button class="admin-btn-sm" data-adm-toggle-ep="${ep.id}">${ep.is_enabled ? 'Disable' : 'Enable'}</button>
               <button class="admin-btn-delete" data-adm-del-ep="${ep.id}" data-adm-ep-online="${ep.online ? '1' : '0'}">Delete</button>
               ${hasModels ? '<svg class="admin-user-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="opacity:0.3;transition:transform 0.2s,opacity 0.2s;"><polyline points="6 9 12 15 18 9"/></svg>' : ''}
@@ -377,6 +383,42 @@ async function loadEndpoints() {
     };
     queryAll('[data-adm-toggle-ep]').forEach(btn => {
       btn.addEventListener('click', async (e) => { e.stopPropagation(); await fetch(`/api/model-endpoints/${btn.dataset.admToggleEp}`, { method: 'PATCH' }); loadEndpoints(); });
+    });
+    queryAll('[data-adm-ctx-window]').forEach(input => {
+      input.addEventListener('click', e => e.stopPropagation());
+      input.addEventListener('keydown', e => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          input.blur();
+        }
+      });
+      input.addEventListener('change', async (e) => {
+        e.stopPropagation();
+        const epId = input.dataset.admCtxWindow;
+        const raw = (input.value || '').trim();
+        const payload = { context_window: raw ? Number(raw) : null };
+        const msg = el('adm-epMsg');
+        try {
+          const res = await fetch(`/api/model-endpoints/${epId}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'same-origin',
+            body: JSON.stringify(payload),
+          });
+          const d = await res.json().catch(() => ({}));
+          if (!res.ok) throw new Error(d.detail || 'Failed to save context');
+          if (msg) {
+            msg.textContent = raw ? `Context budget set to ${raw} tokens` : 'Context budget set to auto';
+            msg.className = 'admin-success';
+          }
+          loadEndpoints();
+        } catch (err) {
+          if (msg) {
+            msg.textContent = err.message || 'Failed to save context';
+            msg.className = 'admin-error';
+          }
+        }
+      });
     });
     queryAll('[data-adm-copy-url]').forEach(btn => {
       btn.addEventListener('click', (e) => {
@@ -628,6 +670,7 @@ function initEndpointForm() {
     msg.textContent = ''; msg.className = '';
     const rawUrl = (provider.value || urlInput.value).trim();
     const apiKey = el('adm-epApiKey').value.trim();
+    const ctxInput = el('adm-epCtx');
     if (!rawUrl) { msg.textContent = 'Select a provider or enter a base URL'; msg.className = 'admin-error'; return; }
     if (provider.value && !apiKey) { msg.textContent = 'API key is required for cloud providers'; msg.className = 'admin-error'; return; }
     // Normalize URL (fix typos, add /v1, strip wrong paths)
@@ -640,6 +683,7 @@ function initEndpointForm() {
       if (apiKey) fd.append('api_key', apiKey);
       const epType = el('adm-epType');
       if (epType) fd.append('model_type', epType.value);
+      if (ctxInput && ctxInput.value.trim()) fd.append('context_window', ctxInput.value.trim());
       fd.append('skip_probe', 'true');
       const res = await fetch('/api/model-endpoints', { method: 'POST', body: fd, credentials: 'same-origin' });
       const d = await res.json();
@@ -647,6 +691,7 @@ function initEndpointForm() {
         const count = d.models ? d.models.length : 0;
         urlInput.value = ''; urlInput.style.display = '';
         el('adm-epApiKey').value = ''; provider.value = '';
+        if (ctxInput) ctxInput.value = '';
         if (epType) epType.value = 'llm';
         if (d.id) _recentlyAddedEpId = String(d.id);
         loadEndpoints();
@@ -701,6 +746,7 @@ function initEndpointForm() {
       const msg = el('adm-epMsg');
       msg.textContent = ''; msg.className = '';
       const raw = (el('adm-epLocalUrl').value || '').trim();
+      const ctxInput = el('adm-epLocalCtx');
       if (!raw) { msg.textContent = 'Enter a base URL (e.g. http://localhost:8002/v1)'; msg.className = 'admin-error'; return; }
       const url = _normalizeBaseUrl(raw);
       localAddBtn.disabled = true; localAddBtn.textContent = 'Adding...';
@@ -709,11 +755,13 @@ function initEndpointForm() {
         fd.append('base_url', url);
         const lt = el('adm-epLocalType');
         if (lt) fd.append('model_type', lt.value);
+        if (ctxInput && ctxInput.value.trim()) fd.append('context_window', ctxInput.value.trim());
         fd.append('skip_probe', 'true');
         const res = await fetch('/api/model-endpoints', { method: 'POST', body: fd, credentials: 'same-origin' });
         const d = await res.json();
         if (res.ok) {
           el('adm-epLocalUrl').value = '';
+          if (ctxInput) ctxInput.value = '';
           if (lt) lt.value = 'llm';
           if (d.id) _recentlyAddedEpId = String(d.id);
           loadEndpoints();

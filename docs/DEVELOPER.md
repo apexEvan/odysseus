@@ -37,6 +37,34 @@ If a local model is loaded, memory should show up under that model backend,
 for example `ollama` or a vLLM/llama-server process. Chrome memory is normally
 UI tabs, extensions, rendering, cached media, or browser automation.
 
+## Context Window Control
+
+Odysseus stores an optional `context_window` on each configured model endpoint.
+When present, that value is the app's effective prompt budget for context
+compaction, trimming, and usage percentages. When absent, Odysseus probes the
+backend's `/models` metadata, llama.cpp `/slots` metadata where available, and
+known model-family fallbacks.
+
+This is deliberately separate from provider request payloads. Most
+OpenAI-compatible APIs do not define a request-side context-window parameter,
+and hosted providers generally fix context by model. Sending ad hoc fields can
+break otherwise valid providers, so Odysseus keeps the control local to prompt
+construction unless a backend-specific integration is explicitly added.
+
+For runtime memory reduction, configure the model server as well:
+
+| Backend | Runtime context knob |
+|---|---|
+| Ollama | Modelfile `PARAMETER num_ctx` |
+| vLLM | `vllm serve ... --max-model-len <tokens>` |
+| SGLang | server context-length launch argument |
+| llama.cpp llama-server | `--ctx-size <tokens>` or `-c <tokens>` |
+| Hosted APIs | fixed by the selected model/provider |
+
+The public UI label should stay plain: **Context** means "Odysseus prompt
+budget in tokens." It is not a promise that the backend has reloaded its KV
+cache at that size.
+
 ## Browser MCP
 
 The Browser MCP is an optional Model Context Protocol server that gives the
