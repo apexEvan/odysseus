@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$ROOT_DIR"
+
+print_group() {
+  local title="$1"
+  local pattern="$2"
+  echo
+  echo "==> ${title}"
+  ps -axo pid,ppid,rss,comm,args \
+    | awk -v pattern="$pattern" '
+      $0 ~ pattern && $0 !~ /awk/ {
+        rss_mib = $3 / 1024
+        total += rss_mib
+        count += 1
+        cmd = substr($0, index($0,$5))
+        if (length(cmd) > 150) {
+          cmd = substr(cmd, 1, 147) "..."
+        }
+        printf "  pid=%-7s rss=%7.1f MiB  %s\n", $1, rss_mib, cmd
+      }
+      END {
+        if (count == 0) {
+          print "  none"
+        } else {
+          printf "  total=%0.1f MiB across %d process(es)\n", total, count
+        }
+      }
+    '
+}
+
+echo "Odysseus local status"
+echo "repo: $ROOT_DIR"
+
+print_group "Odysseus app and built-in MCP" "uvicorn|app:app|mcp_servers/"
+print_group "Browser automation MCP / Playwright" "@playwright/mcp|playwright|chromium"
+print_group "Ollama" "Ollama.app|ollama"
+print_group "Google Chrome" "Google Chrome|Chrome Helper"
+
+if command -v ollama >/dev/null 2>&1; then
+  echo
+  echo "==> Ollama loaded models"
+  ollama ps || true
+fi
+
+echo
+echo "==> Listening Odysseus ports"
+lsof -nP -iTCP -sTCP:LISTEN 2>/dev/null | awk '/7000|7001|7002|7003|7010|7100/ {print "  "$0}' || true

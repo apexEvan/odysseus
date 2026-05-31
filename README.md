@@ -25,6 +25,12 @@ After setup, start Odysseus from the terminal with:
 ./scripts/start
 ```
 
+To see what is running and where memory is going:
+
+```bash
+./scripts/status
+```
+
 ## Features
 - **Chat** -- chat with local or hosted models.
   <br><sub>vLLM · llama.cpp · Ollama · LM Studio · OpenRouter · OpenAI · Anthropic · Gemini</sub>
@@ -251,7 +257,9 @@ For a LAN-only Tailscale deployment, Caddy + [tailscale-cert](https://caddyserve
 ## Contributing
 Help is welcome. The best entry points are fresh-install testing, provider setup
 bugs, mobile/editor polish, docs, and small focused refactors. See
-[ROADMAP.md](ROADMAP.md) for the current help-wanted list.
+[ROADMAP.md](ROADMAP.md) for the current help-wanted list, and
+[docs/DEVELOPER.md](docs/DEVELOPER.md) for the runtime architecture and local
+resource notes.
 
 ## Configuration
 Most setup is done inside the app with `/setup` or **Settings**. Use `.env`
